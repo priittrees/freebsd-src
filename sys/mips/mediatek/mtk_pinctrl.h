@@ -261,6 +261,7 @@ DECL_TABLE(mt7628_pintable) = {
 	GROUP("sdmode", SYSCTL_GPIOMODE, 10, 3, mt7628_sd_func),
 	GROUP("spi", SYSCTL_GPIOMODE, 12, 1, spi_func),
 	GROUP("wdt", SYSCTL_GPIOMODE, 14, 1, wdt_func),
+	GROUP("esd", SYSCTL_GPIOMODE, 15, 1, ephy_func),
 	GROUP("perst", SYSCTL_GPIOMODE, 16, 1, mt7628_perst_func),
 	GROUP("refclk", SYSCTL_GPIOMODE, 18, 1, mt7628_refclk_func),
 	GROUP("i2c", SYSCTL_GPIOMODE, 20, 3, mt7628_i2c_func),

@@ -43,7 +43,10 @@
 #define SYSCTL_CLKCFG0		0x2C
 #define SYSCTL_CLKCFG1		0x30
 #define SYSCTL_RSTCTRL		0x34
+#define SYSCTL_AGPIOCFG		0x3c
+#define	 EPHY_GPIO_AIO_SHIFT	17
 #define SYSCTL_GPIOMODE		0x60
+#define  ESD_MODE		(1U << 15)
 
 #define SYSCTL_CUR_CLK_STS	0x44
 

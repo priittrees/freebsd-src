@@ -21,7 +21,7 @@ mips/mediatek/mtk_dotg.c 		optional usb dwcotg
 mips/mediatek/mtk_pcie.c 		optional pci
 mips/mediatek/mtk_gpio_v1.c 		optional gpio mtk_gpio_v1
 mips/mediatek/mtk_gpio_v2.c 		optional gpio mtk_gpio_v2
-#mips/mediatek/mtk_mmc.c 		optional mmc
+mips/mediatek/mtk_mmc.c 		optional mmc
 
 # Ralink/Mediatek Ethernet driver
 dev/rt/if_rt.c 				optional rt
