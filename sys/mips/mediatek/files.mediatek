@@ -23,6 +23,12 @@ mips/mediatek/mtk_gpio_v1.c 		optional gpio mtk_gpio_v1
 mips/mediatek/mtk_gpio_v2.c 		optional gpio mtk_gpio_v2
 #mips/mediatek/mtk_mmc.c 		optional mmc
 
+# Ralink/Mediatek sound
+dev/sound/fdt/audio_dai_if.m		optional sound fdt
+dev/sound/fdt/audio_soc.c		optional sound fdt
+dev/sound/fdt/dummy_codec.c		optional sound fdt
+mips/mediatek/mtk_i2s.c			optional sound
+
 # Ralink/Mediatek Ethernet driver
 dev/rt/if_rt.c 				optional rt
 
