@@ -255,7 +255,7 @@ static void
 mtk_i2s_enable_bclk (struct mtk_i2s_softc *sc)
 {
 	uint32_t val;
-	val = MTK_I2S_READ_4(sc, MTK_I2S_CFG0);
+	val = MTK_I2S_READ_4(sc, MTK_I2S_DIVCMP);
 	val |=MTK_I2S_CLK_EN;
 	MTK_I2S_WRITE_4(sc, MTK_I2S_DIVCMP, val);
 }
@@ -264,7 +264,7 @@ static void
 mtk_i2s_disable_bclk (struct mtk_i2s_softc *sc)
 {
 	uint32_t val;
-	val = MTK_I2S_READ_4(sc, MTK_I2S_CFG0);
+	val = MTK_I2S_READ_4(sc, MTK_I2S_DIVCMP);
 	val &=~MTK_I2S_CLK_EN;
 	MTK_I2S_WRITE_4(sc, MTK_I2S_DIVCMP, val);
 }
