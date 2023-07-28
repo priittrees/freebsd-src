@@ -2,6 +2,7 @@
  * Copyright (c) 2016 Stanislav Galabov.
  * Copyright (c) 2011-2012 Stefan Bethke.
  * Copyright (c) 2012 Adrian Chadd.
+ * Copyright (c) 2023 Priit Trees
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -73,38 +74,55 @@ static int mtkswitch_ifmedia_upd(if_t ifp);
 static void mtkswitch_ifmedia_sts(if_t ifp, struct ifmediareq *ifmr);
 static void mtkswitch_tick(void *arg);
 
-static const struct ofw_compat_data compat_data[] = {
-	{ "ralink,rt3050-esw",		MTK_SWITCH_RT3050 },
-	{ "ralink,rt3352-esw",		MTK_SWITCH_RT3352 },
-	{ "ralink,rt5350-esw",		MTK_SWITCH_RT5350 },
-	{ "mediatek,mt7620-gsw",	MTK_SWITCH_MT7620 },
-	{ "mediatek,mt7621-gsw",	MTK_SWITCH_MT7621 },
-	{ "mediatek,mt7628-esw",	MTK_SWITCH_MT7628 },
+//static const struct ofw_compat_data compat_data[] = {
+//	{ "mediatek,mt7531",		MTK_SWITCH_MT7531 },
+//
+//	/* Sentinel */
+//	{ NULL,				MTK_SWITCH_NONE }
+//};
 
-	/* Sentinel */
-	{ NULL,				MTK_SWITCH_NONE }
-};
+static void
+mtkswitch_identify(driver_t *driver, device_t parent)
+{
+	if (device_find_child(parent, "mtkswitch", -1) == NULL)
+		BUS_ADD_CHILD(parent, 0, "mtkswitch", -1);
+}
 
 static int
 mtkswitch_probe(device_t dev)
 {
 	struct mtkswitch_softc *sc;
-	mtk_switch_type switch_type;
+	// mtk_switch_type switch_type;
+	phandle_t switch_node;
 
-	if (!ofw_bus_status_okay(dev))
-		return (ENXIO);
+	// if (!ofw_bus_status_okay(dev))
+	// 	return (ENXIO);
 
-	switch_type = ofw_bus_search_compatible(dev, compat_data)->ocd_data;
-	if (switch_type == MTK_SWITCH_NONE)
-		return (ENXIO);
+	// switch_type = ofw_bus_search_compatible(dev, compat_data)->ocd_data;
+	// if (switch_type == MTK_SWITCH_NONE)
+	// 	return (ENXIO);
 
 	sc = device_get_softc(dev);
-	bzero(sc, sizeof(*sc));
-	sc->sc_switchtype = switch_type;
+	switch_node = ofw_bus_find_compatible(OF_finddevice("/"),
+	    "mediatek,mt7531");
 
-	device_set_desc_copy(dev, "MTK Switch Driver");
+	if (switch_node == 0) {
+		return (ENXIO);
+	}
 
-	return (0);
+	if (bootverbose)
+		device_printf(dev, "Found switch_node: 0x%x\n", switch_node);
+
+	// sc = device_get_softc(dev);
+	// bzero(sc, sizeof(*sc));
+	sc->sc_dev = dev;
+	sc->node = switch_node;
+	sc->numports = MTKSWITCH_MAX_PORTS;
+
+	// device_set_desc_copy(dev, "MTK Switch Driver");
+	device_set_desc(dev, "Mediatek switch driver");
+
+	return (BUS_PROBE_DEFAULT);
 }
 
 static int
@@ -173,36 +191,17 @@ mtkswitch_attach(device_t dev)
 {
 	struct mtkswitch_softc *sc;
 	int err = 0;
-	int port, rid;
+	int port;
 
 	sc = device_get_softc(dev);
 
-	/* sc->sc_switchtype is already decided in mtkswitch_probe() */
-	sc->numports = MTKSWITCH_MAX_PORTS;
+	// sc->numports = MTKSWITCH_MAX_PORTS;
 	sc->numphys = MTKSWITCH_MAX_PHYS;
 	sc->cpuport = MTKSWITCH_CPU_PORT;
 	sc->sc_dev = dev;
 
 	/* Attach switch related functions */
-	if (sc->sc_switchtype == MTK_SWITCH_NONE) {
-		device_printf(dev, "Unknown switch type\n");
-		return (ENXIO);
-	}
-
-	if (sc->sc_switchtype == MTK_SWITCH_MT7620 ||
-	    sc->sc_switchtype == MTK_SWITCH_MT7621)
-		mtk_attach_switch_mt7620(sc);
-	else
-		mtk_attach_switch_rt3050(sc);
-
-	/* Allocate resources */
-	rid = 0;
-	sc->sc_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &rid,
-	    RF_ACTIVE);
-	if (sc->sc_res == NULL) {
-		device_printf(dev, "could not map memory\n");
-		return (ENXIO);
-	}
+	mtk_attach_switch_mt7631(sc);
 
 	mtx_init(&sc->sc_mtx, "mtkswitch", NULL, MTX_DEF);
 
@@ -240,7 +239,7 @@ mtkswitch_attach(device_t dev)
 		return (err);
 
 	bus_generic_probe(dev);
-	bus_enumerate_hinted_children(dev);
+	// bus_enumerate_hinted_children(dev);
 	err = bus_generic_attach(dev);
 	DPRINTF(dev, "%s: bus_generic_attach: err=%d\n", __func__, err);
 	if (err != 0)
@@ -362,11 +361,14 @@ mtkswitch_miipollstat(struct mtkswitch_softc *sc)
 	uint32_t portstatus;
 	int i, port_flap = 0;
 
+//	device_printf(sc->sc_dev,"%s\n", __func__);
+
 	MTKSWITCH_LOCK_ASSERT(sc, MA_OWNED);
 
 	for (i = 0; i < sc->numphys; i++) {
 		if (sc->miibus[i] == NULL)
 			continue;
+
 		mii = device_get_softc(sc->miibus[i]);
 		portstatus = sc->hal.mtkswitch_get_port_status(sc,
 		    mtkswitch_portforphy(i));
@@ -381,6 +383,8 @@ mtkswitch_miipollstat(struct mtkswitch_softc *sc)
 
 		mtkswitch_update_ifmedia(portstatus, &mii->mii_media_status,
 		    &mii->mii_media_active);
+
+
 		LIST_FOREACH(miisc, &mii->mii_phys, mii_list) {
 			if (IFM_INST(mii->mii_media.ifm_cur->ifm_media) !=
 			    miisc->mii_inst)
@@ -489,7 +493,7 @@ mtkswitch_setport(device_t dev, etherswitch_port_t *p)
 	sc = device_get_softc(dev);
 	if (p->es_port < 0 || p->es_port > sc->info.es_nports)
 		return (ENXIO);
-        
+
 	/* Port flags. */ 
 	if (sc->vlan_mode == ETHERSWITCH_VLAN_DOT1Q) {
 		err = sc->hal.mtkswitch_port_vlan_setup(sc, p);
@@ -514,7 +518,7 @@ mtkswitch_setport(device_t dev, etherswitch_port_t *p)
 static void
 mtkswitch_statchg(device_t dev)
 {
-
+	// device_printf(dev, "%s\n", __func__);
 	DPRINTF(dev, "%s\n", __func__);
 }
 
@@ -602,12 +606,46 @@ mtkswitch_readphy(device_t dev, int phy, int reg)
 }
 
 static int
+mtkswitch_readphy_mii(device_t dev, int phy, int reg)
+{
+	struct mtkswitch_softc *sc = device_get_softc(dev);
+
+	return (sc->hal.mtkswitch_phy_read(dev, phy, reg));
+}
+
+//static int
+//mtkswitch_readphy_mdio(device_t dev, int phy, int reg)
+//{
+//	device_printf(dev, "%s\n", __func__);
+//	struct mtkswitch_softc *sc = device_get_softc(dev);
+//
+//	return (sc->hal.mtkswitch_phy_read(dev, phy, reg));
+//}
+
+static int
 mtkswitch_writephy(device_t dev, int phy, int reg, int val)
 {
 	struct mtkswitch_softc *sc = device_get_softc(dev);
 
 	return (sc->hal.mtkswitch_phy_write(dev, phy, reg, val));
 }
+
+static int
+mtkswitch_writephy_mii(device_t dev, int phy, int reg, int val)
+{
+	struct mtkswitch_softc *sc = device_get_softc(dev);
+
+	return (sc->hal.mtkswitch_phy_write(dev, phy, reg, val));
+}
+
+//static int
+//mtkswitch_writephy_mdio(device_t dev, int phy, int reg, int val)
+//{
+//	device_printf(dev, "%s\n", __func__);
+//	struct mtkswitch_softc *sc = device_get_softc(dev);
+//
+//	return (sc->hal.mtkswitch_phy_write(dev, phy, reg, val));
+//}
 
 static int
 mtkswitch_readreg(device_t dev, int addr)
@@ -627,6 +665,7 @@ mtkswitch_writereg(device_t dev, int addr, int value)
 
 static device_method_t mtkswitch_methods[] = {
 	/* Device interface */
+	DEVMETHOD(device_identify,	mtkswitch_identify),
 	DEVMETHOD(device_probe,		mtkswitch_probe),
 	DEVMETHOD(device_attach,	mtkswitch_attach),
 	DEVMETHOD(device_detach,	mtkswitch_detach),
@@ -635,13 +674,13 @@ static device_method_t mtkswitch_methods[] = {
 	DEVMETHOD(bus_add_child,	device_add_child_ordered),
 
 	/* MII interface */
-	DEVMETHOD(miibus_readreg,	mtkswitch_readphy),
-	DEVMETHOD(miibus_writereg,	mtkswitch_writephy),
+	DEVMETHOD(miibus_readreg,	mtkswitch_readphy_mii),
+	DEVMETHOD(miibus_writereg,	mtkswitch_writephy_mii),
 	DEVMETHOD(miibus_statchg,	mtkswitch_statchg),
 
 	/* MDIO interface */
-	DEVMETHOD(mdio_readreg,		mtkswitch_readphy),
-	DEVMETHOD(mdio_writereg,	mtkswitch_writephy),
+	// DEVMETHOD(mdio_readreg,		mtkswitch_readphy_mdio),
+	// DEVMETHOD(mdio_writereg,	mtkswitch_writephy_mdio),
 
 	/* ehterswitch interface */
 	DEVMETHOD(etherswitch_lock,	mtkswitch_lock),
@@ -664,10 +703,26 @@ static device_method_t mtkswitch_methods[] = {
 DEFINE_CLASS_0(mtkswitch, mtkswitch_driver, mtkswitch_methods,
     sizeof(struct mtkswitch_softc));
 
-DRIVER_MODULE(mtkswitch, simplebus, mtkswitch_driver, 0, 0);
+//DRIVER_MODULE(etherswitch, mdio, mtkswitch_driver, 0, 0);
+//DRIVER_MODULE(etherswitch, mtkswitch, etherswitch_driver, 0, 0);
+//DRIVER_MODULE(miibus, mtkswitch, miibus_driver, 0, 0);
+//MODULE_DEPEND(mtkswitch, mdio, 1, 1, 1);
+//MODULE_DEPEND(mtkswitch, etherswitch, 1, 1, 1);
+//MODULE_VERSION(mtkswitch, 1);
+
+//DRIVER_MODULE(etherswitch, mdio, mtkswitch_driver, 0, 0);
+//DRIVER_MODULE(etherswitch, mtkswitch, etherswitch_driver, 0, 0);
+//DRIVER_MODULE(mdio, mtkswitch, mdio_driver, 0, 0);
+//DRIVER_MODULE(miibus, mtkswitch, miibus_driver, 0, 0);
+//MODULE_DEPEND(mtkswitch, mdio, 1, 1, 1);
+//MODULE_DEPEND(mtkswitch, miibus, 1, 1, 1);
+//MODULE_DEPEND(mtkswitch, etherswitch, 1, 1, 1);
+//MODULE_VERSION(mtkswitch, 1);
+
+DRIVER_MODULE(mtkswitch, mdio, mtkswitch_driver, 0, 0);
 DRIVER_MODULE(miibus, mtkswitch, miibus_driver, 0, 0);
-DRIVER_MODULE(mdio, mtkswitch, mdio_driver, 0, 0);
 DRIVER_MODULE(etherswitch, mtkswitch, etherswitch_driver, 0, 0);
 MODULE_VERSION(mtkswitch, 1);
-MODULE_DEPEND(mtkswitch, miibus, 1, 1, 1);
-MODULE_DEPEND(mtkswitch, etherswitch, 1, 1, 1);
+MODULE_DEPEND(mtkswitch, mdio, 1, 1, 1);
+
+
