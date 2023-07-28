@@ -42,6 +42,10 @@ device		dwc			# Synopsys DesignWare GMAC controller
 device		dwc_rk			# Rockchip Designware
 device		eqos			# Synopsys Designware Ethernet QoS controller
 
+# Ethernet switch
+device		etherswitch             # Enable etherswitch support
+device		mtkswitch
+
 # IO Domains
 device		rk_iodomain
 
