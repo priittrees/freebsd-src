@@ -1402,6 +1402,9 @@ rtnl_handle_ifevent(if_t ifp, int nlmsg_type, int if_flags_mask)
 	if (!nl_has_listeners(NETLINK_ROUTE, RTNLGRP_LINK))
 		return;
 
+	if (ifp->if_ioctl == NULL)
+		return;
+
 	if (!nlmsg_get_group_writer(&nw, NLMSG_LARGE, NETLINK_ROUTE, RTNLGRP_LINK)) {
 		NL_LOG(LOG_DEBUG, "error allocating mbuf");
 		return;
