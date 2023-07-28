@@ -63,20 +63,29 @@ __FBSDID("$FreeBSD$");
 
 #include <machine/bus.h>
 
+#include <dev/mii/mii.h>
+#include <dev/mii/miivar.h>
+
 #include <dev/dwc/if_dwc.h>
 #include <dev/dwc/if_dwcvar.h>
 #include <dev/mii/mii.h>
 #include <dev/mii/miivar.h>
+#include <dev/fdt/fdt_common.h>
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
+#include <dev/mdio/mdio.h>
 #include <dev/mii/mii_fdt.h>
 
 #include <dev/extres/clk/clk.h>
 #include <dev/extres/hwreset/hwreset.h>
 
+#include <dev/dwc/if_dwc.h>
+#include <dev/dwc/if_dwcvar.h>
+
 #include "if_dwc_if.h"
 #include "gpio_if.h"
 #include "miibus_if.h"
+#include "mdio_if.h"
 
 #define	READ4(_sc, _reg) \
 	bus_read_4((_sc)->res[0], _reg)
@@ -240,6 +249,8 @@ dwc_miibus_read_reg(device_t dev, int phy, int reg)
 
 	sc = device_get_softc(dev);
 
+	KASSERT(!sc->switch_attached, ("miibus used with switch attached"));
+
 	mii = ((phy & GMII_ADDRESS_PA_MASK) << GMII_ADDRESS_PA_SHIFT)
 	    | ((reg & GMII_ADDRESS_GR_MASK) << GMII_ADDRESS_GR_SHIFT)
 	    | (sc->mii_clk << GMII_ADDRESS_CR_SHIFT)
@@ -267,6 +278,8 @@ dwc_miibus_write_reg(device_t dev, int phy, int reg, int val)
 
 	sc = device_get_softc(dev);
 
+	KASSERT(!sc->switch_attached, ("miibus used with switch attached"));
+
 	mii = ((phy & GMII_ADDRESS_PA_MASK) << GMII_ADDRESS_PA_SHIFT)
 	    | ((reg & GMII_ADDRESS_GR_MASK) << GMII_ADDRESS_GR_SHIFT)
 	    | (sc->mii_clk << GMII_ADDRESS_CR_SHIFT)
@@ -286,30 +299,14 @@ dwc_miibus_write_reg(device_t dev, int phy, int reg, int val)
 }
 
 static void
-dwc_miibus_statchg(device_t dev)
+dwc_mac_change(struct dwc_softc *sc, uint32_t media)
 {
-	struct dwc_softc *sc;
-	struct mii_data *mii;
 	uint32_t reg;
-
-	/*
-	 * Called by the MII bus driver when the PHY establishes
-	 * link to set the MAC interface registers.
-	 */
-
-	sc = device_get_softc(dev);
 
 	DWC_ASSERT_LOCKED(sc);
 
-	mii = sc->mii_softc;
-
-	if (mii->mii_media_status & IFM_ACTIVE)
-		sc->link_is_up = true;
-	else
-		sc->link_is_up = false;
-
 	reg = READ4(sc, MAC_CONFIGURATION);
-	switch (IFM_SUBTYPE(mii->mii_media_active)) {
+	switch (IFM_SUBTYPE(media)) {
 	case IFM_1000_T:
 	case IFM_1000_SX:
 		reg &= ~(CONF_FES | CONF_PS);
@@ -326,27 +323,53 @@ dwc_miibus_statchg(device_t dev)
 		return;
 	default:
 		sc->link_is_up = false;
-		device_printf(dev, "Unsupported media %u\n",
-		    IFM_SUBTYPE(mii->mii_media_active));
+		device_printf(sc->dev, "Unsupported media %u\n",
+				IFM_SUBTYPE(media));
 		return;
 	}
-	if ((IFM_OPTIONS(mii->mii_media_active) & IFM_FDX) != 0)
+	if ((IFM_OPTIONS(media) & IFM_FDX) != 0)
 		reg |= (CONF_DM);
 	else
 		reg &= ~(CONF_DM);
 	WRITE4(sc, MAC_CONFIGURATION, reg);
 
 	reg = FLOW_CONTROL_UP;
-	if ((IFM_OPTIONS(mii->mii_media_active) & IFM_ETH_TXPAUSE) != 0)
+	if ((IFM_OPTIONS(media) & IFM_ETH_TXPAUSE) != 0)
 		reg |= FLOW_CONTROL_TX;
-	if ((IFM_OPTIONS(mii->mii_media_active) & IFM_ETH_RXPAUSE) != 0)
+	if ((IFM_OPTIONS(media) & IFM_ETH_RXPAUSE) != 0)
 		reg |= FLOW_CONTROL_RX;
-	if ((IFM_OPTIONS(mii->mii_media_active) & IFM_FDX) != 0)
+	if ((IFM_OPTIONS(media) & IFM_FDX) != 0)
 		reg |= dwc_pause_time << FLOW_CONTROL_PT_SHIFT;
 	WRITE4(sc, FLOW_CONTROL, reg);
 
-	IF_DWC_SET_SPEED(dev, IFM_SUBTYPE(mii->mii_media_active));
+	IF_DWC_SET_SPEED(sc->dev, IFM_SUBTYPE(media));
+}
 
+static void
+dwc_miibus_statchg(device_t dev)
+{
+	struct dwc_softc *sc;
+	struct mii_data *mii;
+
+	/*
+	 * Called by the MII bus driver when the PHY establishes
+	 * link to set the MAC interface registers.
+	 */
+
+	sc = device_get_softc(dev);
+
+	KASSERT(sc->phy_attached == 1, ("dwc_tick while PHY not attached"));
+
+	DWC_ASSERT_LOCKED(sc);
+
+	mii = sc->mii_softc;
+
+	if (mii->mii_media_status & IFM_ACTIVE)
+		sc->link_is_up = true;
+	else
+		sc->link_is_up = false;
+
+	dwc_mac_change(sc, mii->mii_media_active);
 }
 
 /*
@@ -360,11 +383,20 @@ dwc_media_status(if_t ifp, struct ifmediareq *ifmr)
 	struct mii_data *mii;
 
 	sc = if_getsoftc(ifp);
-	mii = sc->mii_softc;
 	DWC_LOCK(sc);
+
+	if (!sc->phy_attached) {
+		ifmr->ifm_active = IFM_1000_T | IFM_FDX | IFM_ETHER;
+		ifmr->ifm_status = IFM_AVALID | IFM_ACTIVE;
+		goto out_unlock;
+	}
+
+	mii = sc->mii_softc;
 	mii_pollstat(mii);
 	ifmr->ifm_active = mii->mii_media_active;
 	ifmr->ifm_status = mii->mii_media_status;
+
+out_unlock:
 	DWC_UNLOCK(sc);
 }
 
@@ -379,13 +411,19 @@ static int
 dwc_media_change(if_t ifp)
 {
 	struct dwc_softc *sc;
-	int error;
+	int error = 0;
 
 	sc = if_getsoftc(ifp);
 
-	DWC_LOCK(sc);
-	error = dwc_media_change_locked(sc);
-	DWC_UNLOCK(sc);
+	/*
+	 * Do not do anything for switch here
+	 */
+
+	if (sc->phy_attached) {
+		DWC_LOCK(sc);
+		error = dwc_media_change_locked(sc);
+		DWC_UNLOCK(sc);
+	}
 	return (error);
 }
 
@@ -1170,7 +1208,8 @@ dwc_init_locked(struct dwc_softc *sc)
 	 * Call mii_mediachg() which will call back into dwc_miibus_statchg()
 	 * to set up the remaining config registers based on current media.
 	 */
-	mii_mediachg(sc->mii_softc);
+	if (sc->phy_attached)
+		mii_mediachg(sc->mii_softc);
 
 	dwc_setup_rxfilter(sc);
 	dwc_setup_core(sc);
@@ -1180,7 +1219,14 @@ dwc_init_locked(struct dwc_softc *sc)
 
 	if_setdrvflagbits(ifp, IFF_DRV_RUNNING, IFF_DRV_OACTIVE);
 
-	callout_reset(&sc->dwc_callout, hz, dwc_tick, sc);
+        /* Setup port configuration */
+        if (sc->switch_attached) {
+                sc->link_is_up = true;
+                dwc_mac_change(sc, IFM_ETHER | IFM_1000_T | IFM_FDX);
+        }
+
+	if (sc->phy_attached)
+		callout_reset(&sc->dwc_callout, hz, dwc_tick, sc);
 }
 
 static void
@@ -1252,8 +1298,13 @@ dwc_ioctl(if_t ifp, u_long cmd, caddr_t data)
 		break;
 	case SIOCSIFMEDIA:
 	case SIOCGIFMEDIA:
-		mii = sc->mii_softc;
-		error = ifmedia_ioctl(ifp, ifr, &mii->mii_media, cmd);
+		if (!sc->phy_attached) {
+			error = ifmedia_ioctl(ifp, ifr, &sc->dwc_ifmedia,
+			    cmd);
+		} else {
+			mii = sc->mii_softc;
+			error = ifmedia_ioctl(ifp, ifr, &mii->mii_media, cmd);
+		}
 		break;
 	case SIOCSIFCAP:
 		mask = ifr->ifr_reqcap ^ if_getcapenable(ifp);
@@ -1598,18 +1649,122 @@ dwc_probe(device_t dev)
 	return (BUS_PROBE_DEFAULT);
 }
 
+	static int
+dwc_mdio_writereg(device_t dev, int phy, int reg, int val)
+{
+
+	// device_printf(dev,"%s\n",__func__);;
+	struct dwc_softc *sc;
+	uint32_t timeout;
+	uint16_t mii;
+	sc = device_get_softc(dev);
+
+	KASSERT(sc != NULL, ("NULL softc ptr!"));
+	DWC_LOCK(sc);
+
+	mii = ((phy & GMII_ADDRESS_PA_MASK) << GMII_ADDRESS_PA_SHIFT)
+	    | ((reg & GMII_ADDRESS_GR_MASK) << GMII_ADDRESS_GR_SHIFT)
+	    | (sc->mii_clk << GMII_ADDRESS_CR_SHIFT)
+	    | GMII_ADDRESS_GB | GMII_ADDRESS_GW;
+
+	WRITE4(sc, GMII_DATA, val);
+	WRITE4(sc, GMII_ADDRESS, mii);
+
+	timeout = 1000;
+	while (--timeout &&
+			(READ4(sc, GMII_ADDRESS) & GMII_ADDRESS_GB))
+		DELAY(10);
+
+	if (timeout == 0) {
+		device_printf(dev, "MDIO read timeout.\n");
+		goto out;
+	}
+
+	goto out;
+
+out:
+	DWC_UNLOCK(sc);
+	return (0);
+}
+
+	static int
+dwc_mdio_readreg(device_t dev, int phy, int reg)
+{
+	int ret = 0;
+	uint16_t mii;
+	uint32_t timeout;
+
+	// device_printf(dev,"%s\n",__func__);;
+	struct dwc_softc *sc;
+	sc = device_get_softc(dev);
+
+	KASSERT(sc != NULL, ("NULL softc ptr!"));
+	DWC_LOCK(sc);
+
+	timeout = 1000;
+	while (--timeout &&
+	    (READ4(sc, GMII_ADDRESS) & GMII_ADDRESS_GB))
+		DELAY(10);
+
+	if (timeout == 0) {
+		device_printf(dev, "MDIO read timeout.\n");
+		ret = ~0U;
+		goto out;
+	}
+
+	mii = ((phy & GMII_ADDRESS_PA_MASK) << GMII_ADDRESS_PA_SHIFT)
+	    | ((reg & GMII_ADDRESS_GR_MASK) << GMII_ADDRESS_GR_SHIFT)
+	    | (sc->mii_clk << GMII_ADDRESS_CR_SHIFT)
+	    | GMII_ADDRESS_GB; /* Busy flag */
+
+	WRITE4(sc, GMII_ADDRESS, mii);
+	timeout = 1000;
+	while (--timeout &&
+	    (READ4(sc, GMII_ADDRESS) & GMII_ADDRESS_GB))
+		DELAY(10);
+
+	if (timeout == 0) {
+		device_printf(dev, "MDIO read timeout.\n");
+		ret = ~0U;
+		goto out;
+	}
+
+	ret = READ4(sc, GMII_DATA);
+
+	goto out;
+
+out:
+	DWC_UNLOCK(sc);
+	return (ret);
+}
+
+static boolean_t
+dwc_has_switch(device_t dev)
+{
+#ifdef FDT
+	phandle_t node;
+	node = ofw_bus_get_node(dev);
+	// return (dwc_has_switch_fdt(dev));
+	return (fdt_find_ethernet_prop_switch(node, OF_finddevice("/")));
+#endif
+
+	return (false);
+}
+
 static int
 dwc_attach(device_t dev)
 {
 	uint8_t macaddr[ETHER_ADDR_LEN];
 	struct dwc_softc *sc;
 	if_t ifp;
-	int error, i;
+	int error, i, phy;
 	uint32_t reg;
 	phandle_t node;
 	uint32_t txpbl, rxpbl, pbl;
 	bool nopblx8 = false;
 	bool fixed_burst = false;
+
+	// struct dwc_softc *phy_sc;
 
 	sc = device_get_softc(dev);
 	sc->dev = dev;
@@ -1618,6 +1773,10 @@ dwc_attach(device_t dev)
 	sc->tx_mapcount = 0;
 	sc->mii_clk = IF_DWC_MII_CLK(dev);
 	sc->mactype = IF_DWC_MAC_TYPE(dev);
+
+	// phy = 0;
+	sc->phy_attached = 0;
+	sc->switch_attached = 0;
 
 	node = ofw_bus_get_node(dev);
 	switch (mii_fdt_get_contype(node)) {
@@ -1742,17 +1901,43 @@ dwc_attach(device_t dev)
 	if_setcapenable(sc->ifp, if_getcapabilities(sc->ifp));
 
 	/* Attach the mii driver. */
-	error = mii_attach(dev, &sc->miibus, ifp, dwc_media_change,
-	    dwc_media_status, BMSR_DEFCAPMASK, MII_PHY_ANY,
-	    MII_OFFSET_ANY, 0);
 
-	if (error != 0) {
-		device_printf(dev, "PHY attach failed\n");
-		bus_teardown_intr(dev, sc->res[1], sc->intr_cookie);
-		bus_release_resources(dev, dwc_spec, sc->res);
-		return (ENXIO);
+	if (fdt_get_phyaddr(node, sc->dev, &phy, NULL) == 0) {
+		error = mii_attach(dev, &sc->miibus, ifp, dwc_media_change,
+			dwc_media_status, BMSR_DEFCAPMASK, phy,
+			MII_OFFSET_ANY, 0);
+
+		if (error != 0) {
+			device_printf(dev, "PHY%i attach failed\n", phy);
+			bus_teardown_intr(dev, sc->res[1], sc->intr_cookie);
+			bus_release_resources(dev, dwc_spec, sc->res);
+			return (ENXIO);
+		}
+		sc->mii_softc = device_get_softc(sc->miibus);
+		// device_printf(dev, "PHY%i attached\n", phy);
+		sc->phy_attached = 1;
+	} else {
+		/* Fixed-link, use predefined values */
+		ifmedia_init(&sc->dwc_ifmedia, 0,
+				dwc_media_change,
+				dwc_media_status);
+		ifmedia_add(&sc->dwc_ifmedia,
+				IFM_ETHER | IFM_1000_T | IFM_FDX,
+				0, NULL);
+		ifmedia_set(&sc->dwc_ifmedia,
+				IFM_ETHER | IFM_1000_T | IFM_FDX);
+
+		if (dwc_has_switch(dev)) {
+			device_t child;
+			child = device_add_child(dev, "mdio", -1);
+			bus_generic_attach(dev);
+			bus_generic_attach(child);
+			// device_printf(dev, "Switch attached.\n");
+			sc->switch_attached = 1;
+		} else {
+			device_printf(dev, "PHY not attached.\n");
+		}
 	}
-	sc->mii_softc = device_get_softc(sc->miibus);
 
 	/* All ready to run, attach the ethernet interface. */
 	ether_ifattach(ifp, macaddr);
@@ -1816,6 +2001,10 @@ static device_method_t dwc_methods[] = {
 	DEVMETHOD(miibus_writereg,	dwc_miibus_write_reg),
 	DEVMETHOD(miibus_statchg,	dwc_miibus_statchg),
 
+	/* MDIO interface */
+	DEVMETHOD(mdio_readreg,         dwc_mdio_readreg),
+	DEVMETHOD(mdio_writereg,        dwc_mdio_writereg),
+
 	{ 0, 0 }
 };
 
@@ -1827,6 +2016,8 @@ driver_t dwc_driver = {
 
 DRIVER_MODULE(dwc, simplebus, dwc_driver, 0, 0);
 DRIVER_MODULE(miibus, dwc, miibus_driver, 0, 0);
+DRIVER_MODULE(mdio, dwc, mdio_driver, 0, 0);
 
 MODULE_DEPEND(dwc, ether, 1, 1, 1);
 MODULE_DEPEND(dwc, miibus, 1, 1, 1);
+MODULE_DEPEND(dwc, mdio, 1, 1, 1);

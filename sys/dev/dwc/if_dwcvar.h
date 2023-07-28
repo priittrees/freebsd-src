@@ -66,6 +66,7 @@ struct dwc_softc {
 	device_t		miibus;
 	struct mii_data *	mii_softc;
 	if_t			ifp;
+	struct ifmedia		dwc_ifmedia;
 	int			if_flags;
 	struct mtx		mtx;
 	void *			intr_cookie;
@@ -99,6 +100,8 @@ struct dwc_softc {
 	uint32_t		tx_map_tail;
 	int			tx_desccount;
 	int			tx_mapcount;
+	int			phy_attached;
+	int			switch_attached;
 };
 
 #endif	/* __IF_DWCVAR_H__ */

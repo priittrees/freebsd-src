@@ -35,6 +35,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/module.h>
 
 #include <net/if.h>
+#include <net/if_media.h>
 
 #include <machine/bus.h>
 
