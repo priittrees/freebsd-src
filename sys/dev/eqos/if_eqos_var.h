@@ -85,6 +85,7 @@ struct eqos_softc {
 	bool			link_up;
 	int			tx_watchdog;
 
+	struct ifmedia		eqos_ifmedia;
 	struct ifnet		*ifp;
 	device_t		miibus;
 	struct mtx		lock;
@@ -92,6 +93,9 @@ struct eqos_softc {
 
 	struct eqos_ring	tx;
 	struct eqos_ring	rx;
+
+	int			phy_attached;
+	int			switch_attached;
 };
 
 DECLARE_CLASS(eqos_driver);
