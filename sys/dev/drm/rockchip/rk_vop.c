@@ -630,7 +630,6 @@ static driver_t rk_vop_driver = {
 	sizeof(struct rk_vop_softc)
 };
 
-static devclass_t rk_vop_devclass;
 EARLY_DRIVER_MODULE(rk_vop, simplebus, rk_vop_driver,
-    rk_vop_devclass, 0, 0, BUS_PASS_INTERRUPT + BUS_PASS_ORDER_LAST);
+    0, 0, BUS_PASS_INTERRUPT + BUS_PASS_ORDER_LAST);
 MODULE_VERSION(rk_vop, 1);

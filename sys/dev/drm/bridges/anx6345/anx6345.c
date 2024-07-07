@@ -415,9 +415,7 @@ static driver_t anx6345_driver = {
 	sizeof(struct anx6345_softc),
 };
 
-static devclass_t anx6345_devclass;
-
-EARLY_DRIVER_MODULE(anx6345, iicbus, anx6345_driver, anx6345_devclass,
+EARLY_DRIVER_MODULE(anx6345, iicbus, anx6345_driver,
     0, 0, BUS_PASS_SUPPORTDEV + BUS_PASS_ORDER_FIRST);
 MODULE_VERSION(anx6345, 1);
 MODULE_DEPEND(anx6345, iicbus, 1, 1, 1);

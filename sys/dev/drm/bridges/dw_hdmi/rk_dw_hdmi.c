@@ -242,8 +242,6 @@ static device_method_t rk_dw_hdmi_methods[] = {
 DEFINE_CLASS_1(rk_dw_hdmi, rk_dw_hdmi_driver, rk_dw_hdmi_methods,
     sizeof(struct rk_dw_hdmi_softc), dw_hdmi_driver);
 
-static devclass_t rk_dw_hdmi_devclass;
-
 EARLY_DRIVER_MODULE(rk_dw_hdmi, simplebus, rk_dw_hdmi_driver,
-  rk_dw_hdmi_devclass, 0, 0, BUS_PASS_SUPPORTDEV + BUS_PASS_ORDER_EARLY);
+  0, 0, BUS_PASS_SUPPORTDEV + BUS_PASS_ORDER_EARLY);
 MODULE_VERSION(rk_dw_hdmi, 1);

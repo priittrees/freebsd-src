@@ -353,9 +353,7 @@ static driver_t aw_de2_driver = {
 	sizeof(struct aw_de2_drm_softc),
 };
 
-static devclass_t aw_de2_drm_devclass;
-
-DRIVER_MODULE(aw_de2_drm, simplebus, aw_de2_driver, aw_de2_drm_devclass, 0, 0);
+DRIVER_MODULE(aw_de2_drm, simplebus, aw_de2_driver, 0, 0);
 MODULE_DEPEND(aw_de2_drm, aw_de2, 1, 1, 1);
 MODULE_DEPEND(aw_de2_drm, aw_de2_mixer, 1, 1, 1);
 /* Bindings for fbd device. */

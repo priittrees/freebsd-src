@@ -145,8 +145,6 @@ static device_method_t aw_de2_methods[] = {
 DEFINE_CLASS_1(aw_de2, aw_de2_driver, aw_de2_methods,
     sizeof(struct aw_de2_softc), simplebus_driver);
 
-static devclass_t aw_de2_devclass;
-
 EARLY_DRIVER_MODULE(aw_de2, simplebus, aw_de2_driver,
-  aw_de2_devclass, 0, 0, BUS_PASS_SUPPORTDEV + BUS_PASS_ORDER_FIRST);
+  0, 0, BUS_PASS_SUPPORTDEV + BUS_PASS_ORDER_FIRST);
 MODULE_VERSION(aw_de2, 1);

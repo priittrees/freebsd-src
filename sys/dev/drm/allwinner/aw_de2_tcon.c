@@ -683,9 +683,7 @@ static driver_t aw_de2_tcon_driver = {
 	sizeof(struct aw_de2_tcon_softc),
 };
 
-static devclass_t aw_de2_tcon_devclass;
-
 EARLY_DRIVER_MODULE(aw_tcon, simplebus, aw_de2_tcon_driver,
-  aw_de2_tcon_devclass, 0, 0, BUS_PASS_SUPPORTDEV + BUS_PASS_ORDER_MIDDLE);
+  0, 0, BUS_PASS_SUPPORTDEV + BUS_PASS_ORDER_MIDDLE);
 MODULE_DEPEND(aw_de2_tcon, aw_de2_dw_hdmi, 1, 1, 1);
 MODULE_VERSION(aw_de2_tcon, 1);

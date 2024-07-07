@@ -640,8 +640,6 @@ static driver_t aw_de2_hdmi_phy_driver = {
 	sizeof(struct aw_de2_hdmi_phy_softc),
 };
 
-static devclass_t aw_de2_hdmi_phy_devclass;
-
 EARLY_DRIVER_MODULE(aw_de2_hdmi_phy, simplebus, aw_de2_hdmi_phy_driver,
-  aw_de2_hdmi_phy_devclass, 0, 0, BUS_PASS_SUPPORTDEV + BUS_PASS_ORDER_FIRST);
+  0, 0, BUS_PASS_SUPPORTDEV + BUS_PASS_ORDER_FIRST);
 MODULE_VERSION(aw_de2_hdmi_phy, 1);

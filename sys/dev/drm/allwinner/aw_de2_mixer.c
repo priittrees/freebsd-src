@@ -301,10 +301,8 @@ static driver_t aw_de2_mixer_driver = {
 	sizeof(struct aw_de2_mixer_softc),
 };
 
-static devclass_t aw_de2_mixer_devclass;
-
 EARLY_DRIVER_MODULE(aw_de2_mixer, simplebus, aw_de2_mixer_driver,
-  aw_de2_mixer_devclass, 0, 0, BUS_PASS_SUPPORTDEV + BUS_PASS_ORDER_LATE);
+  0, 0, BUS_PASS_SUPPORTDEV + BUS_PASS_ORDER_LATE);
 MODULE_DEPEND(aw_de2_mixer, aw_de2_tcon, 1, 1, 1);
 MODULE_VERSION(aw_de2_mixer, 1);
 
