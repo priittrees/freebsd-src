@@ -262,11 +262,8 @@ scnprintf(char *buf, size_t size, const char *fmt, ...)
 })
 #endif
 
-#define container_of(ptr, type, member)				\
-({								\
-	const __typeof(((type *)0)->member) *__p = (ptr);	\
-	(type *)((uintptr_t)__p - offsetof(type, member));	\
-})
+/* Use FreeBSD's containerof. */
+#define	container_of(x, s, m)	__containerof(x, s, m)
 
 #define	ARRAY_SIZE(x)	(sizeof(x) / sizeof((x)[0]))
 
