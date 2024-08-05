@@ -1923,6 +1923,7 @@ dev/iicbus/sensor/max44009.c	optional max44009
 dev/iicbus/gpio/pcf8574.c	optional pcf8574
 dev/iicbus/gpio/tca64xx.c	optional tca64xx fdt gpio
 dev/iicbus/pmic/fan53555.c	optional fan53555 fdt | tcs4525 fdt
+dev/iicbus/es8316.c		optional es8316codec
 dev/iicbus/pmic/silergy/sy8106a.c	optional sy8106a fdt
 dev/iicbus/pmic/silergy/syr827.c	optional syr827 fdt
 dev/igc/if_igc.c		optional igc iflib pci
