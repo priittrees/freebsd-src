@@ -27,6 +27,7 @@ device		tcs4525			# TCS 4525 PMIC
 
 # SPI
 device		rk_spi			# RockChip SPI controller
+device		rk_sfc			# RockChip SFC controller
 
 # PWM
 device		rk_pwm

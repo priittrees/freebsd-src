@@ -122,6 +122,8 @@ static struct mx25l_flash_ident flash_devices[] = {
 	{ "en25q64",	0x1c, 0x3017, 64 * 1024, 128, FL_ERASE_4K },
 	{ "m25p32",	0x20, 0x2016, 64 * 1024, 64, FL_NONE },
 	{ "m25p64",	0x20, 0x2017, 64 * 1024, 128, FL_NONE },
+	{ "xm25qu128c",	0x20, 0x4118, 64 * 1024, 256, FL_ERASE_4K | FL_ERASE_32K },
+
 	{ "mx25l1606e", 0xc2, 0x2015, 64 * 1024, 32, FL_ERASE_4K},
 	{ "mx25ll32",	0xc2, 0x2016, 64 * 1024, 64, FL_NONE },
 	{ "mx25ll64",	0xc2, 0x2017, 64 * 1024, 128, FL_NONE },
@@ -154,6 +156,10 @@ static struct mx25l_flash_ident flash_devices[] = {
 
 	/* Integrated Silicon Solution */
 	{ "is25wp256",	0x9d, 0x7019, 64 * 1024, 512, FL_ERASE_4K | FL_ENABLE_4B_ADDR},
+
+        /* zbit */
+        { "zb25vq128",  0x5e, 0x4018, 64 * 1024, 256, FL_ERASE_4K },
+
 };
 
 static int
