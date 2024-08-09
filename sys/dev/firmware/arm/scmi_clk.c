@@ -155,8 +155,16 @@ scmi_clknode_init(struct clknode *clk, device_t dev)
 static int
 scmi_clknode_recalc_freq(struct clknode *clk, uint64_t *freq)
 {
+        struct scmi_clknode_softc *clk_sc;
+        struct scmi_clk_softc *sc;
+        int error;
+        clk_sc = clknode_get_softc(clk);
+        sc = device_get_softc(clk_sc->dev);
 
-	return (0);
+        error = scmi_clk_get_rate(sc, clk_sc->clock_id, freq);
+        dprintf("%s: %ld\n", __func__, *freq);
+
+	return (error);
 }
 
 static int

@@ -44,10 +44,15 @@
 #include <dev/ofw/ofw_bus_subr.h>
 
 #include "dev/mailbox/arm/arm_doorbell.h"
+#include "dev/psci/psci.h"
 
 #include "scmi.h"
 #include "scmi_protocols.h"
 
+enum scmi_transport {
+        SCMI_SMC = 1,
+        SCMI_MBOX,
+};
 struct scmi_softc {
 	struct simplebus_softc	simplebus_sc;
 	device_t		dev;
@@ -55,6 +60,8 @@ struct scmi_softc {
 	struct arm_doorbell	*db;
 	struct mtx		mtx;
 	int			req_done;
+	uint32_t		smc_id;
+	uint8_t			ttype;
 };
 
 static device_t
@@ -110,7 +117,7 @@ static int
 scmi_request_locked(struct scmi_softc *sc, struct scmi_req *req)
 {
 	struct scmi_smt_header hdr;
-	int timeout;
+	int timeout, status;
 
 	bzero(&hdr, sizeof(struct scmi_smt_header));
 
@@ -127,7 +134,8 @@ scmi_request_locked(struct scmi_softc *sc, struct scmi_req *req)
 	hdr.msg_header = req->protocol_id << SMT_HEADER_PROTOCOL_ID_S;
 	hdr.msg_header |= req->message_id << SMT_HEADER_MESSAGE_ID_S;
 	hdr.length = sizeof(hdr.msg_header) + req->in_size;
-	hdr.flags |= SCMI_SHMEM_FLAG_INTR_ENABLED;
+	if(sc->ttype == SCMI_MBOX)
+	 hdr.flags |= SCMI_SHMEM_FLAG_INTR_ENABLED;
 
 	/* Write header */
 	scmi_shmem_write(sc->tx_shmem, 0, &hdr, SMT_HEADER_SIZE);
@@ -135,7 +143,7 @@ scmi_request_locked(struct scmi_softc *sc, struct scmi_req *req)
 	/* Write request */
 	scmi_shmem_write(sc->tx_shmem, SMT_HEADER_SIZE, req->in_buf,
 	    req->in_size);
-
+       if(sc->ttype == SCMI_MBOX) {
 	sc->req_done = 0;
 
 	/* Interrupt SCP firmware. */
@@ -161,14 +169,18 @@ scmi_request_locked(struct scmi_softc *sc, struct scmi_req *req)
 		return (-1);
 
 	dprintf("%s: got reply, timeout %d\n", __func__, timeout);
-
+	} else {
+	status = psci_call(sc->smc_id, 0, 0, 0);
+	if(status)
+	 return (status);
+	}
 	/* Read header. */
 	scmi_shmem_read(sc->tx_shmem, 0, &hdr, SMT_HEADER_SIZE);
 
 	/* Read response */
 	scmi_shmem_read(sc->tx_shmem, SMT_HEADER_SIZE, req->out_buf,
 	    req->out_size);
-
+/*	    printf("TRALALA :%08x\n",hdr.channel_status);*/
 	return (0);
 }
 
@@ -187,12 +199,17 @@ scmi_request(device_t dev, struct scmi_req *req)
 	return (error);
 }
 
+
+static struct ofw_compat_data compat_data[] = {
+        {"arm,scmi", SCMI_MBOX},
+        {"arm,scmi-smc", SCMI_SMC},
+        {NULL,             0}
+};
 static int
 scmi_probe(device_t dev)
 {
-
-	if (!ofw_bus_is_compatible(dev, "arm,scmi"))
-		return (ENXIO);
+	if (ofw_bus_search_compatible(dev, compat_data)->ocd_data == 0)
+                return (ENXIO);
 
 	if (!ofw_bus_status_okay(dev))
 		return (ENXIO);
@@ -208,10 +225,9 @@ scmi_attach(device_t dev)
 	struct scmi_softc *sc;
 	phandle_t node;
 	int error;
-
 	sc = device_get_softc(dev);
 	sc->dev = dev;
-
+	sc->ttype = ofw_bus_search_compatible(dev, compat_data)->ocd_data;
 	node = ofw_bus_get_node(dev);
 	if (node == -1)
 		return (ENXIO);
@@ -222,16 +238,22 @@ scmi_attach(device_t dev)
 		return (ENXIO);
 	}
 
-	sc->db = arm_doorbell_ofw_get(sc->dev, "tx");
-	if (sc->db == NULL) {
-		device_printf(dev, "Doorbell device not found.\n");
+	if(sc->ttype == SCMI_MBOX) {
+		sc->db = arm_doorbell_ofw_get(sc->dev, "tx");
+		if (sc->db == NULL) {
+			device_printf(dev, "Doorbell device not found.\n");
+			return (ENXIO);
+		}
+
+		arm_doorbell_set_handler(sc->db, scmi_callback, sc);
+	 } else {
+	  if(OF_getencprop(node, "arm,smc-id", &sc->smc_id, sizeof(sc->smc_id)) <= 0) {
+		device_printf(dev, "arm,smc-id not found.\n");
 		return (ENXIO);
-	}
+		}
+	 }
 
 	mtx_init(&sc->mtx, device_get_nameunit(dev), "SCMI", MTX_DEF);
-
-	arm_doorbell_set_handler(sc->db, scmi_callback, sc);
-
 	simplebus_init(dev, node);
 
 	/*
@@ -267,5 +289,5 @@ static device_method_t scmi_methods[] = {
 DEFINE_CLASS_1(scmi, scmi_driver, scmi_methods, sizeof(struct scmi_softc),
     simplebus_driver);
 
-DRIVER_MODULE(scmi, simplebus, scmi_driver, 0, 0);
+EARLY_DRIVER_MODULE(scmi, simplebus, scmi_driver, 0, 0, BUS_PASS_SUPPORTDEV + BUS_PASS_ORDER_LATE);
 MODULE_VERSION(scmi, 1);
