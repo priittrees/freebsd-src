@@ -83,14 +83,17 @@
 #define	RK3399_GRF_EMMCCORE_CON11		0xf02c
 #define	 RK3399_CORECFG_CLOCKMULTIPLIER		0xff
 
+#define RK35XX_CTRL_HS400			0x7
 #define	RK3568_EMMC_HOST_CTRL			0x0508
 #define	RK3568_EMMC_EMMC_CTRL			0x052c
+#define  RK35XX_CARD_IS_EMMC			0x1	
 #define	RK3568_EMMC_ATCTRL			0x0540
 #define	RK3568_EMMC_DLL_CTRL			0x0800
 #define	 DLL_CTRL_SRST				0x00000001
 #define	 DLL_CTRL_START				0x00000002
 #define	 DLL_CTRL_START_POINT_DEFAULT		0x00050000
 #define	 DLL_CTRL_INCREMENT_DEFAULT		0x00000200
+#define	 DLL_CTRL_BYPASS			0x01000000
 
 #define	RK3568_EMMC_DLL_RXCLK			0x0804
 #define	 DLL_RXCLK_DELAY_ENABLE			0x08000000
@@ -104,7 +107,12 @@
 #define	RK3568_EMMC_DLL_STRBIN			0x080c
 #define	 DLL_STRBIN_DELAY_ENABLE		0x08000000
 #define	 DLL_STRBIN_TAPNUM_DEFAULT		0x00000008
-#define	DLL_STRBIN_TAPNUM_FROM_SW		0x01000000
+#define  DLL_STRBIN_DELAY_NUM_SEL		0x04000000
+#define  DLL_STRBIN_DELAY_NUM_OFFSET		16
+#define  DLL_STRBIN_DELAY_NUM_DEFAULT		0x16
+#define	 DLL_STRBIN_TAPNUM_FROM_SW		0x01000000
+
+#define	RK3568_EMMC_DLL_CMDOUT			0x0810
 
 #define	RK3568_EMMC_DLL_STATUS0			0x0840
 #define	 DLL_STATUS0_DLL_LOCK			0x00000100
@@ -441,30 +449,86 @@ sdhci_fdt_get_ro(device_t bus, device_t dev)
 	return (sdhci_generic_get_ro(bus, dev) ^ sc->wp_inverted);
 }
 
+static void 
+rk35xx_set_uhs_timing(device_t brdev, struct sdhci_slot *slot)
+{
+   	uint16_t ctrl, ctrl_2;
+   	const struct mmc_ios *ios;
+	
+	 if (slot->version < SDHCI_SPEC_300) return;
+
+   	mtx_assert(&slot->mtx, MA_OWNED);
+        ios = &slot->host.ios;
+	
+	ctrl_2 = sdhci_fdt_read_2(brdev, slot, SDHCI_HOST_CONTROL2);
+	/* Select Bus Speed Mode for host */
+	ctrl_2 &= ~SDHCI_CTRL2_UHS_MASK;
+
+	if ((ios->timing == bus_timing_mmc_hs200) ||
+	    (ios->timing == bus_timing_uhs_sdr104))
+		ctrl_2 |= SDHCI_CTRL2_UHS_SDR104;
+	else if (ios->timing == bus_timing_uhs_sdr12)
+		ctrl_2 |= SDHCI_CTRL2_UHS_SDR12;
+	else if ((ios->timing == bus_timing_uhs_sdr25))
+		ctrl_2 |= SDHCI_CTRL2_UHS_SDR25;
+	else if (ios->timing == bus_timing_uhs_sdr50)
+		ctrl_2 |= SDHCI_CTRL2_UHS_SDR50;
+	else if ((ios->timing == bus_timing_uhs_ddr50) ||
+		 (ios->timing == bus_timing_mmc_ddr52))
+		ctrl_2 |= SDHCI_CTRL2_UHS_DDR50;
+	else if (ios->timing == bus_timing_mmc_hs400) {
+		/* set CARD_IS_EMMC bit to enable Data Strobe for HS400 */
+		ctrl = sdhci_fdt_read_2(brdev, slot, RK3568_EMMC_EMMC_CTRL);
+		ctrl |= RK35XX_CARD_IS_EMMC;
+		sdhci_fdt_write_2(brdev, slot, RK3568_EMMC_EMMC_CTRL, ctrl);
+		ctrl_2 |= RK35XX_CTRL_HS400;
+	}
+
+	sdhci_fdt_write_2(brdev, slot, SDHCI_HOST_CONTROL2, ctrl_2);
+	device_printf(brdev,"SUPER FAKE timing\n");            
+}
+static void
+sdhci_fdt_set_uhs_timing(device_t brdev, struct sdhci_slot *slot)
+{
+if (ofw_bus_search_compatible(brdev, compat_data)->ocd_data ==
+            SDHCI_FDT_RK3568) {
+             rk35xx_set_uhs_timing(brdev, slot);
+             return;
+ } else {
+  device_printf(brdev, "UHS timings not implemented -- card might not work in UHS mode\n");
+  }           
+}
+
 static int
 sdhci_fdt_set_clock(device_t dev, struct sdhci_slot *slot, int clock)
 {
 	struct sdhci_fdt_softc *sc = device_get_softc(dev);
 	int32_t val;
+	uint32_t uval;
 	int i;
 
 	if (ofw_bus_search_compatible(dev, compat_data)->ocd_data ==
 	    SDHCI_FDT_RK3568) {
 		if (clock == 400000)
 			clock = 375000;
-
 		if (clock) {
 			clk_set_freq(sc->clk_core, clock, 0);
-
+			uval = bus_read_4(sc->mem_res[slot->num], RK3568_EMMC_HOST_CTRL) & (~1);
+	                bus_write_4(sc->mem_res[slot->num], RK3568_EMMC_HOST_CTRL, uval);
+				
 			if (clock <= 52000000) {
 				bus_write_4(sc->mem_res[slot->num],
-				    RK3568_EMMC_DLL_CTRL, 0x0);
+				    RK3568_EMMC_DLL_CTRL, DLL_CTRL_START|DLL_CTRL_BYPASS);
 				bus_write_4(sc->mem_res[slot->num],
 				    RK3568_EMMC_DLL_RXCLK, DLL_RXCLK_NO_INV);
 				bus_write_4(sc->mem_res[slot->num],
 				    RK3568_EMMC_DLL_TXCLK, 0x0);
 				bus_write_4(sc->mem_res[slot->num],
-				    RK3568_EMMC_DLL_STRBIN, 0x0);
+				    RK3568_EMMC_DLL_CMDOUT, 0x0);
+				    
+				uval = DLL_STRBIN_DELAY_ENABLE | DLL_STRBIN_DELAY_NUM_SEL | 
+				       DLL_STRBIN_DELAY_NUM_DEFAULT << DLL_STRBIN_DELAY_NUM_OFFSET;
+				bus_write_4(sc->mem_res[slot->num], RK3568_EMMC_DLL_STRBIN, uval); 
 				return (clock);
 			}
 
@@ -473,6 +537,7 @@ sdhci_fdt_set_clock(device_t dev, struct sdhci_slot *slot, int clock)
 			DELAY(1000);
 			bus_write_4(sc->mem_res[slot->num],
 			    RK3568_EMMC_DLL_CTRL, 0);
+		
 			bus_write_4(sc->mem_res[slot->num],
 			    RK3568_EMMC_DLL_CTRL, DLL_CTRL_START_POINT_DEFAULT |
 			    DLL_CTRL_INCREMENT_DEFAULT | DLL_CTRL_START);
@@ -484,6 +549,7 @@ sdhci_fdt_set_clock(device_t dev, struct sdhci_slot *slot, int clock)
 					break;
 				DELAY(1000);
 			}
+
 			bus_write_4(sc->mem_res[slot->num], RK3568_EMMC_ATCTRL,
 			    (0x1 << 16 | 0x2 << 17 | 0x3 << 19));
 			bus_write_4(sc->mem_res[slot->num],
@@ -498,7 +564,7 @@ sdhci_fdt_set_clock(device_t dev, struct sdhci_slot *slot, int clock)
 			    DLL_STRBIN_TAPNUM_FROM_SW);
 		}
 	}
-	return (clock);
+	return (clock);	
 }
 
 static int
@@ -534,6 +600,7 @@ sdhci_fdt_probe(device_t dev)
 		device_set_desc(dev, "Zynq-7000 generic fdt SDHCI controller");
 		break;
 	case SDHCI_FDT_RK3568:
+		sc->quirks = SDHCI_QUIRK_BROKEN_TIMEOUT_VAL;
 		device_set_desc(dev, "Rockchip RK3568 fdt SDHCI controller");
 		break;
 	case SDHCI_FDT_XLNX_ZMP:
@@ -568,7 +635,8 @@ sdhci_fdt_attach(device_t dev)
 	struct sdhci_fdt_softc *sc = device_get_softc(dev);
 	struct sdhci_slot *slot;
 	int err, slots, rid, i, compat;
-
+	uint32_t temp;
+	char *rk35xx_clocks[] = {"bus", "timer", "axi", "block" };
 	sc->dev = dev;
 
 	/* Allocate IRQ. */
@@ -613,6 +681,15 @@ sdhci_fdt_attach(device_t dev)
 			return (ENXIO);
 		}
 		clk_enable(sc->clk_core);
+		for(i = 0; i < nitems(rk35xx_clocks);i++) {
+		clk_t clk_tmp;
+		if (clk_get_by_ofw_name(dev, 0,rk35xx_clocks[i], &clk_tmp)) {
+		printf("RRRR %d\n",i);
+			device_printf(dev, "cannot get %s clock\n", rk35xx_clocks[i]);
+			return (ENXIO);
+		}
+		clk_enable(clk_tmp);		 
+		 }
 		break;
 	default:
 		break;
@@ -638,11 +715,15 @@ sdhci_fdt_attach(device_t dev)
 		slot->caps = sc->caps;
 		slot->max_clk = sc->max_clk;
 		slot->sdma_boundary = sc->sdma_boundary;
-
+		temp = sdhci_fdt_read_4(dev, slot, RK3568_EMMC_HOST_CTRL) & (~1);
+		sdhci_fdt_write_4(dev, slot, RK3568_EMMC_HOST_CTRL, temp);
+		sdhci_fdt_write_4(dev, slot, RK3568_EMMC_DLL_TXCLK, 0);
+		sdhci_fdt_write_4(dev, slot, RK3568_EMMC_DLL_STRBIN, 0);	
 		if (sdhci_init_slot(dev, slot, i) != 0)
 			continue;
 
 		sc->num_slots++;
+
 	}
 	device_printf(dev, "%d slot(s) allocated\n", sc->num_slots);
 
@@ -655,8 +736,9 @@ sdhci_fdt_attach(device_t dev)
 	}
 
 	/* Process cards detection. */
-	for (i = 0; i < sc->num_slots; i++)
+	for (i = 0; i < sc->num_slots; i++) 
 		sdhci_start_slot(&sc->slots[i]);
+		
 
 	return (0);
 }
@@ -697,6 +779,10 @@ static device_method_t sdhci_fdt_methods[] = {
 	DEVMETHOD(mmcbr_get_ro,		sdhci_fdt_get_ro),
 	DEVMETHOD(mmcbr_acquire_host,	sdhci_generic_acquire_host),
 	DEVMETHOD(mmcbr_release_host,	sdhci_generic_release_host),
+	DEVMETHOD(mmcbr_tune,           sdhci_generic_tune),
+        DEVMETHOD(mmcbr_retune,         sdhci_generic_retune),
+        DEVMETHOD(mmcbr_switch_vccq,    sdhci_generic_switch_vccq),
+
 
 	/* SDHCI registers accessors */
 	DEVMETHOD(sdhci_read_1,		sdhci_fdt_read_1),
@@ -708,7 +794,7 @@ static device_method_t sdhci_fdt_methods[] = {
 	DEVMETHOD(sdhci_write_4,	sdhci_fdt_write_4),
 	DEVMETHOD(sdhci_write_multi_4,	sdhci_fdt_write_multi_4),
 	DEVMETHOD(sdhci_set_clock,	sdhci_fdt_set_clock),
-
+	DEVMETHOD(sdhci_set_uhs_timing, sdhci_fdt_set_uhs_timing),
 	DEVMETHOD_END
 };
 

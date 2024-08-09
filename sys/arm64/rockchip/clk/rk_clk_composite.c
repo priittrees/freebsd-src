@@ -229,27 +229,33 @@ rk_clk_composite_set_freq(struct clknode *clk, uint64_t fparent, uint64_t *fout,
 	const char **p_names;
 	uint64_t best, cur;
 	uint32_t div, div_reg, best_div, best_div_reg, val;
-	int p_idx, best_parent;
+	int p_idx, best_parent, orig_p_idx, nparents, temp_idx;
 
+	orig_p_idx = clknode_get_parent_idx(clk);
+	nparents = clknode_get_parents_num(clk);
 	sc = clknode_get_softc(clk);
 	dprintf("Finding best parent/div for target freq of %ju\n", *fout);
 	p_names = clknode_get_parent_names(clk);
 	for (best_div = 0, best = 0, p_idx = 0;
-	     p_idx != clknode_get_parents_num(clk); p_idx++) {
-		p_clk = clknode_find_by_name(p_names[p_idx]);
+	     p_idx != nparents; p_idx++) {
+	     	temp_idx = (p_idx + orig_p_idx) % nparents;
+		p_clk = clknode_find_by_name(p_names[temp_idx]);
 		clknode_get_freq(p_clk, &fparent);
 		dprintf("Testing with parent %s (%d) at freq %ju\n",
-		    clknode_get_name(p_clk), p_idx, fparent);
+		    clknode_get_name(p_clk), temp_idx, fparent);
 		div = rk_clk_composite_find_best(sc, fparent, *fout, &div_reg);
 		cur = fparent / div;
-		if ((*fout - cur) < (*fout - best)) {
+		if (abs(*fout - cur) < abs(*fout - best)) {
 			best = cur;
 			best_div = div;
 			best_div_reg = div_reg;
-			best_parent = p_idx;
+			best_parent = temp_idx;
 			dprintf("Best parent so far %s (%d) with best freq at "
 			    "%ju\n", clknode_get_name(p_clk), p_idx, best);
+		if(*fout == cur) 
+			break;		    
 		}
+	
 	}
 
 	*stop = 1;
@@ -268,7 +274,7 @@ rk_clk_composite_set_freq(struct clknode *clk, uint64_t fparent, uint64_t *fout,
 		return (0);
 	}
 
-	p_idx = clknode_get_parent_idx(clk);
+	p_idx = orig_p_idx;
 	if (p_idx != best_parent) {
 		dprintf("Switching parent index from %d to %d\n", p_idx,
 		    best_parent);

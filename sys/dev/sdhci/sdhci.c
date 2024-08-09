@@ -417,7 +417,7 @@ sdhci_set_clock(struct sdhci_slot *slot, uint32_t clock)
 
 	if (clock == slot->clock)
 		return;
-	clock = SDHCI_SET_CLOCK(slot->bus, slot, clock);
+/*	clock = SDHCI_SET_CLOCK(slot->bus, slot, clock);*/
 	slot->clock = clock;
 
 	/* Turn off the clock. */
@@ -504,6 +504,7 @@ sdhci_set_clock(struct sdhci_slot *slot, uint32_t clock)
 	/* Pass clock signal to the bus. */
 	clk |= SDHCI_CLOCK_CARD_EN;
 	WR2(slot, SDHCI_CLOCK_CONTROL, clk);
+	clock = SDHCI_SET_CLOCK(slot->bus, slot, clock);
 }
 
 static void

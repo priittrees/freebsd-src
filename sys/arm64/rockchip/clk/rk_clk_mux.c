@@ -161,7 +161,7 @@ rk_clk_mux_set_mux(struct clknode *clk, int idx)
 
 	return(0);
 }
-
+#define CLK_SET_NOTBUSY  0x00020000
 static int
 rk_clk_mux_set_freq(struct clknode *clk, uint64_t fparent, uint64_t *fout,
     int flags, int *stop)
@@ -171,6 +171,7 @@ rk_clk_mux_set_freq(struct clknode *clk, uint64_t fparent, uint64_t *fout,
 	const char **p_names;
 	int p_idx, best_parent;
 	int rv;
+	uint64_t best = 0, target = *fout;
 
 	sc = clknode_get_softc(clk);
 
@@ -183,20 +184,23 @@ rk_clk_mux_set_freq(struct clknode *clk, uint64_t fparent, uint64_t *fout,
 		return (0);
 	}
 
-	dprintf("Finding best parent for target freq of %ju\n", *fout);
+	dprintf("Finding best parent for target freq of %ju\n", target);
 	p_names = clknode_get_parent_names(clk);
 	for (p_idx = 0; p_idx != clknode_get_parents_num(clk); p_idx++) {
 		p_clk = clknode_find_by_name(p_names[p_idx]);
 		dprintf("Testing with parent %s (%d)\n",
 		    clknode_get_name(p_clk), p_idx);
 
-		rv = clknode_set_freq(p_clk, *fout, flags | CLK_SET_DRYRUN, 0);
+		rv = clknode_set_freq(p_clk, *fout, flags | CLK_SET_DRYRUN | CLK_SET_NOTBUSY,  0);
 		dprintf("Testing with parent %s (%d) rv=%d\n",
 		    clknode_get_name(p_clk), p_idx, rv);
-		if (rv == 0) {
+		if (rv == 0 && (abs(target - *fout) < abs(target - best))) {
 			best_parent = p_idx;
+			best = *fout;
 			p_best_clk = p_clk;
 			*stop = 1;
+			if(best == target)
+				break;
 		}
 	}
 
