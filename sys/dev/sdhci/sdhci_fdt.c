@@ -354,6 +354,38 @@ sdhci_init_rk3399(device_t dev)
 	return (0);
 }
 
+static int
+sdhci_init_rk3568(device_t dev)
+{
+	struct sdhci_fdt_softc *sc = device_get_softc(dev);
+	int err, i;
+	char *rk35xx_clocks[] = {"bus", "timer", "axi", "block" };
+
+	/* setup & enable clocks */
+	if (clk_get_by_ofw_name(dev, 0, "core", &sc->clk_core)) {
+		device_printf(dev, "cannot get core clock\n");
+			return (ENXIO);
+	}
+	err = clk_enable(sc->clk_core);
+	if(err) {
+		device_printf(dev, "cannot enable core clock\n");
+		return (err);
+	}
+	for(i = 0; i < nitems(rk35xx_clocks);i++) {
+		clk_t clk_tmp;
+		if (clk_get_by_ofw_name(dev, 0, rk35xx_clocks[i], &clk_tmp)) {
+			device_printf(dev, "cannot get %s clock\n", rk35xx_clocks[i]);
+			return (ENXIO);
+		 }
+		 err = clk_enable(clk_tmp);
+		 if(err) break;
+		 device_printf(dev, "enabled clock %s => %s\n", rk35xx_clocks[i],
+		 clk_get_name(clk_tmp));
+	}
+
+	return (err);
+}
+
 static uint8_t
 sdhci_fdt_read_1(device_t dev, struct sdhci_slot *slot, bus_size_t off)
 {
@@ -536,7 +568,6 @@ sdhci_fdt_set_clock(device_t dev, struct sdhci_slot *slot, int clock)
 			DELAY(1000);
 			bus_write_4(sc->mem_res[slot->num],
 			    RK3568_EMMC_DLL_CTRL, 0);
-
 			bus_write_4(sc->mem_res[slot->num],
 			    RK3568_EMMC_DLL_CTRL, DLL_CTRL_START_POINT_DEFAULT |
 			    DLL_CTRL_INCREMENT_DEFAULT | DLL_CTRL_START);
@@ -548,17 +579,14 @@ sdhci_fdt_set_clock(device_t dev, struct sdhci_slot *slot, int clock)
 					break;
 				DELAY(1000);
 			}
-
 			bus_write_4(sc->mem_res[slot->num], RK3568_EMMC_ATCTRL,
 			    (0x1 << 16 | 0x3 << 17 | 0x3 << 19));
 			bus_write_4(sc->mem_res[slot->num],
 			    RK3568_EMMC_DLL_RXCLK,
 			    DLL_RXCLK_DELAY_ENABLE | DLL_RXCLK_NO_INV);
-
 			bus_write_4(sc->mem_res[slot->num],
 			    RK3568_EMMC_DLL_TXCLK, DLL_TXCLK_DELAY_ENABLE |
 			    DLL_TXCLK_TAPNUM_DEFAULT|DLL_TXCLK_TAPNUM_FROM_SW | DLL_RXCLK_NO_INV);
-
 			bus_write_4(sc->mem_res[slot->num],
 			    RK3568_EMMC_DLL_STRBIN, DLL_STRBIN_DELAY_ENABLE |
 			    DLL_STRBIN_TAPNUM_DEFAULT |
@@ -638,8 +666,6 @@ sdhci_fdt_attach(device_t dev)
 	int err, slots, rid, i, compat;
 	uint32_t temp;
 
-	char *rk35xx_clocks[] = {"bus", "timer", "axi", "block" };
-
 	sc->dev = dev;
 
 	/* Allocate IRQ. */
@@ -678,20 +704,11 @@ sdhci_fdt_attach(device_t dev)
 		}
 		break;
 	case SDHCI_FDT_RK3568:
-		/* setup & enable clocks */
-		if (clk_get_by_ofw_name(dev, 0, "core", &sc->clk_core)) {
-			device_printf(dev, "cannot get core clock\n");
-			return (ENXIO);
-		}
-		clk_enable(sc->clk_core);
-		for(i = 0; i < nitems(rk35xx_clocks);i++) {
-			clk_t clk_tmp;
-			if (clk_get_by_ofw_name(dev, 0,rk35xx_clocks[i], &clk_tmp)) {
-				device_printf(dev, "cannot get %s clock\n", rk35xx_clocks[i]);
-				return (ENXIO);
-				}
-			clk_enable(clk_tmp);
-		 }
+			err = sdhci_init_rk3568(dev);
+			if (err != 0) {
+				device_printf(dev, "Cannot init RK3568 SDHCI\n");
+				return (err);
+			}
 		break;
 	default:
 		break;
@@ -717,15 +734,16 @@ sdhci_fdt_attach(device_t dev)
 		slot->caps = sc->caps;
 		slot->max_clk = sc->max_clk;
 		slot->sdma_boundary = sc->sdma_boundary;
-		temp = sdhci_fdt_read_4(dev, slot, RK3568_EMMC_HOST_CTRL) & (~1);
-		sdhci_fdt_write_4(dev, slot, RK3568_EMMC_HOST_CTRL, temp);
+		if(compat == SDHCI_FDT_RK3568) {
+			temp = sdhci_fdt_read_4(dev, slot, RK3568_EMMC_HOST_CTRL) & (~1);
+			sdhci_fdt_write_4(dev, slot, RK3568_EMMC_HOST_CTRL, temp);
+		}
 		sdhci_fdt_write_4(dev, slot, RK3568_EMMC_DLL_TXCLK, 0);
 		sdhci_fdt_write_4(dev, slot, RK3568_EMMC_DLL_STRBIN, 0);
 		if (sdhci_init_slot(dev, slot, i) != 0)
 			continue;
 
 		sc->num_slots++;
-
 	}
 	device_printf(dev, "%d slot(s) allocated\n", sc->num_slots);
 
@@ -740,7 +758,6 @@ sdhci_fdt_attach(device_t dev)
 	/* Process cards detection. */
 	for (i = 0; i < sc->num_slots; i++)
 		sdhci_start_slot(&sc->slots[i]);
-
 
 	return (0);
 }
