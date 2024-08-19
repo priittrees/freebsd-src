@@ -109,7 +109,37 @@ static struct resource_spec eqos_spec[] = {
 };
 
 static void eqos_tick(void *softc);
+static void eqos_txintr(void *softc);
 
+static void
+eqos_enable_csum_offload(struct eqos_softc *sc)
+{
+        uint32_t reg;
+        
+        EQOS_ASSERT_LOCKED(sc);
+        reg = RD4(sc, GMAC_MAC_CONFIGURATION);
+        if ((if_getcapenable(sc->ifp) & IFCAP_RXCSUM) != 0)
+                reg |= GMAC_MAC_CONFIGURATION_IPC;
+        else
+                reg &= ~GMAC_MAC_CONFIGURATION_IPC;
+        WR4(sc, GMAC_MAC_CONFIGURATION, reg);
+}
+
+
+static int
+eqos_miibus_wait_idle(struct eqos_softc *sc)
+{
+	uint32_t addr;
+	int retry;
+
+	for (retry = MII_BUSY_RETRY; retry > 0; retry--) {
+		addr = RD4(sc, GMAC_MAC_MDIO_ADDRESS);
+		if (!(addr & GMAC_MAC_MDIO_ADDRESS_GB))
+			break;
+		DELAY(10);
+	}
+	return (retry);
+}
 
 static int
 eqos_miibus_readreg(device_t dev, int phy, int reg)
@@ -120,7 +150,10 @@ eqos_miibus_readreg(device_t dev, int phy, int reg)
 
 	KASSERT(!sc->switch_attached, ("miibus used with switch attached"));
 
-	addr = sc->csr_clock_range |
+	addr = RD4(sc, GMAC_MAC_MDIO_ADDRESS);
+	addr &= GMAC_MAC_MDIO_ADDRESS_SKAP |
+                GMAC_MAC_MDIO_ADDRESS_C45E;
+	addr |= sc->csr_clock_range |
 	    (phy << GMAC_MAC_MDIO_ADDRESS_PA_SHIFT) |
 	    (reg << GMAC_MAC_MDIO_ADDRESS_RDA_SHIFT) |
 	    GMAC_MAC_MDIO_ADDRESS_GOC_READ | GMAC_MAC_MDIO_ADDRESS_GB;
@@ -128,21 +161,16 @@ eqos_miibus_readreg(device_t dev, int phy, int reg)
 
 	DELAY(100);
 
-	for (retry = MII_BUSY_RETRY; retry > 0; retry--) {
-		addr = RD4(sc, GMAC_MAC_MDIO_ADDRESS);
-		if (!(addr & GMAC_MAC_MDIO_ADDRESS_GB)) {
-			val = RD4(sc, GMAC_MAC_MDIO_DATA) & 0xFFFF;
-			break;
-		}
-		DELAY(10);
-	}
+	retry = eqos_miibus_wait_idle(sc);
 	if (!retry) {
 		device_printf(dev, "phy read timeout, phy=%d reg=%d\n",
 		    phy, reg);
 		return (ETIMEDOUT);
 	}
+	val = RD4(sc, GMAC_MAC_MDIO_DATA) & 0xFFFF;
 	return (val);
 }
+
 
 static int
 eqos_miibus_writereg(device_t dev, int phy, int reg, int val)
@@ -153,9 +181,20 @@ eqos_miibus_writereg(device_t dev, int phy, int reg, int val)
 
 	KASSERT(!sc->switch_attached, ("miibus used with switch attached"));
 
+	retry = eqos_miibus_wait_idle(sc);
+
+	if(!retry) {
+		device_printf(dev, "phy@%d busy before write\n", phy);
+		return EBUSY;
+	}
+
 	WR4(sc, GMAC_MAC_MDIO_DATA, val);
 
-	addr = sc->csr_clock_range |
+	addr = RD4(sc, GMAC_MAC_MDIO_ADDRESS);
+        addr &= GMAC_MAC_MDIO_ADDRESS_SKAP |
+                GMAC_MAC_MDIO_ADDRESS_C45E;
+
+	addr |= sc->csr_clock_range |
 	    (phy << GMAC_MAC_MDIO_ADDRESS_PA_SHIFT) |
 	    (reg << GMAC_MAC_MDIO_ADDRESS_RDA_SHIFT) |
 	    GMAC_MAC_MDIO_ADDRESS_GOC_WRITE | GMAC_MAC_MDIO_ADDRESS_GB;
@@ -163,12 +202,7 @@ eqos_miibus_writereg(device_t dev, int phy, int reg, int val)
 
 	DELAY(100);
 
-	for (retry = MII_BUSY_RETRY; retry > 0; retry--) {
-		addr = RD4(sc, GMAC_MAC_MDIO_ADDRESS);
-		if (!(addr & GMAC_MAC_MDIO_ADDRESS_GB))
-			break;
-		DELAY(10);
-	}
+	retry = eqos_miibus_wait_idle(sc);
 	if (!retry) {
 		device_printf(dev, "phy write timeout, phy=%d reg=%d\n",
 		    phy, reg);
@@ -181,9 +215,7 @@ static void
 eqos_mac_change(struct eqos_softc *sc, uint32_t media)
 {
 	uint32_t reg;
-
 	reg = RD4(sc, GMAC_MAC_CONFIGURATION);
-
 	switch (IFM_SUBTYPE(media)) {
 	case IFM_10_T:
 		reg |= GMAC_MAC_CONFIGURATION_PS;
@@ -208,15 +240,26 @@ eqos_mac_change(struct eqos_softc *sc, uint32_t media)
 		return;
 	}
 
-	if ((IFM_OPTIONS(media) & IFM_FDX))
+ 	if ((IFM_OPTIONS(media) & IFM_FDX))
 		reg |= GMAC_MAC_CONFIGURATION_DM;
 	else
 		reg &= ~GMAC_MAC_CONFIGURATION_DM;
 
 	WR4(sc, GMAC_MAC_CONFIGURATION, reg);
-
+/*
+	device_printf(dev, "GMAC_CONFIG %x\n", reg);
+*/
 	IF_EQOS_SET_SPEED(sc->dev, IFM_SUBTYPE(media));
-
+	reg = RD4(sc, GMAC_MAC_Q0_TX_FLOW_CTRL);
+	reg = 0;
+	reg |= 0xFFFFU << GMAC_MAC_Q0_TX_FLOW_CTRL_PT_SHIFT;
+	reg |= GMAC_MAC_Q0_TX_FLOW_CTRL_TFE;
+	WR4(sc, GMAC_MAC_Q0_TX_FLOW_CTRL, reg);
+	device_printf(sc->dev, "GMAC_TX_FLOW %x\n", reg);
+	reg = RD4(sc, GMAC_MAC_RX_FLOW_CTRL);
+	reg |= GMAC_MAC_RX_FLOW_CTRL_RFE;
+	WR4(sc, GMAC_MAC_RX_FLOW_CTRL, reg);
+	device_printf(sc->dev, "GMAC_RX_FLOW %x\n", reg);
 	WR4(sc, GMAC_MAC_1US_TIC_COUNTER, (sc->csr_clock / 1000000) - 1);
 }
 
@@ -228,14 +271,18 @@ eqos_miibus_statchg(device_t dev)
 
 	KASSERT(sc->phy_attached == 1, ("wqos_tick while PHY not attached"));
 
-	EQOS_ASSERT_LOCKED(sc);
+	if (mii == NULL || sc->ifp == NULL ||
+            (if_getdrvflags(sc->ifp) & IFF_DRV_RUNNING) == 0)
+                return;
 
+	EQOS_ASSERT_LOCKED(sc);
 	if (mii->mii_media_status & IFM_ACTIVE)
 		sc->link_up = true;
 	else
 		sc->link_up = false;
 
 	eqos_mac_change(sc, mii->mii_media_active);
+
 }
 
 static void
@@ -246,19 +293,19 @@ eqos_media_status(if_t ifp, struct ifmediareq *ifmr)
 
 	EQOS_LOCK(sc);
 
-	if (!sc->phy_attached) {
-		ifmr->ifm_active = IFM_1000_T | IFM_FDX | IFM_ETHER;
-		ifmr->ifm_status = IFM_AVALID | IFM_ACTIVE;
-		goto out_unlock;
-	}
+ 	if (!sc->phy_attached) {
+ 		ifmr->ifm_active = IFM_1000_T | IFM_FDX | IFM_ETHER;
+ 		ifmr->ifm_status = IFM_AVALID | IFM_ACTIVE;
+ 		goto out_unlock;
+ 	}
 
-	mii = device_get_softc(sc->miibus);
+ 	mii = device_get_softc(sc->miibus);
 	mii_pollstat(mii);
 	ifmr->ifm_active = mii->mii_media_active;
 	ifmr->ifm_status = mii->mii_media_status;
 
 out_unlock:
-        EQOS_UNLOCK(sc);
+	EQOS_UNLOCK(sc);
 }
 
 static int
@@ -268,10 +315,10 @@ eqos_media_change(if_t ifp)
 	int error = 0;
 
 	/*
-	 * Do not do anything for switch here
-	 */
+ 	 * Do not do anything for switch here
+ 	 */
 
-if (sc->phy_attached) {
+	if (sc->phy_attached) {
 		EQOS_LOCK(sc);
 		error = mii_mediachg(device_get_softc(sc->miibus));
 		EQOS_UNLOCK(sc);
@@ -292,7 +339,7 @@ eqos_setup_txdesc(struct eqos_softc *sc, int index, int flags,
 		tdes2 = (flags & EQOS_TDES3_LD) ? EQOS_TDES2_IOC : 0;
 		tdes3 = flags;
 	}
-	bus_dmamap_sync(sc->tx.desc_tag, sc->tx.desc_map, BUS_DMASYNC_PREWRITE);
+//	bus_dmamap_sync(sc->tx.desc_tag, sc->tx.desc_map, BUS_DMASYNC_PREWRITE);
 	sc->tx.desc_ring[index].des0 = htole32((uint32_t)paddr);
 	sc->tx.desc_ring[index].des1 = htole32((uint32_t)(paddr >> 32));
 	sc->tx.desc_ring[index].des2 = htole32(tdes2 | len);
@@ -333,8 +380,12 @@ eqos_setup_txbuf(struct eqos_softc *sc, struct mbuf *m)
 	    BUS_DMASYNC_PREWRITE);
 
 	sc->tx.buf_map[first].mbuf = m;
-
-	for (flags = EQOS_TDES3_FD, idx = 0; idx < nsegs; idx++) {
+	flags = EQOS_TDES3_FD;
+        if ((m->m_pkthdr.csum_flags & CSUM_IP) != 0) 
+                flags |= EQOS_TDES3_CIC_FULL;
+        
+	
+	for (idx = 0; idx < nsegs; idx++) {
 		if (idx == (nsegs - 1))
 			flags |= EQOS_TDES3_LD;
 		eqos_setup_txdesc(sc, sc->tx.head, flags, segs[idx].ds_addr,
@@ -343,12 +394,11 @@ eqos_setup_txbuf(struct eqos_softc *sc, struct mbuf *m)
 		flags |= EQOS_TDES3_OWN;
 		sc->tx.head = TX_NEXT(sc->tx.head);
 	}
-
 	/*
 	 * Defer setting OWN bit on the first descriptor
 	 * until all descriptors have been updated
 	 */
-	bus_dmamap_sync(sc->tx.desc_tag, sc->tx.desc_map, BUS_DMASYNC_PREWRITE);
+//	bus_dmamap_sync(sc->tx.desc_tag, sc->tx.desc_map, BUS_DMASYNC_PREWRITE);
 	sc->tx.desc_ring[first].des3 |= htole32(EQOS_TDES3_OWN);
 
 	return (0);
@@ -361,7 +411,15 @@ eqos_setup_rxdesc(struct eqos_softc *sc, int index, bus_addr_t paddr)
 	sc->rx.desc_ring[index].des0 = htole32((uint32_t)paddr);
 	sc->rx.desc_ring[index].des1 = htole32((uint32_t)(paddr >> 32));
 	sc->rx.desc_ring[index].des2 = htole32(0);
-	bus_dmamap_sync(sc->rx.desc_tag, sc->rx.desc_map, BUS_DMASYNC_PREWRITE);
+
+	sc->rx.desc_ring[index].des3 = htole32(EQOS_RDES3_OWN | EQOS_RDES3_IOC |
+	    EQOS_RDES3_BUF1V);
+}
+
+static void
+eqos_reuse_rxdesc(struct eqos_softc *sc, int index)
+{
+
 	sc->rx.desc_ring[index].des3 = htole32(EQOS_RDES3_OWN | EQOS_RDES3_IOC |
 	    EQOS_RDES3_BUF1V);
 }
@@ -517,6 +575,57 @@ eqos_init_rings(struct eqos_softc *sc)
 	WR4(sc, GMAC_DMA_CHAN0_RX_END_ADDR,
 	    (uint32_t)sc->rx.desc_ring_paddr + DESC_OFFSET(RX_DESC_COUNT));
 }
+#define UBOOT_LEACH
+#ifdef UBOOT_LEACH
+#define GMAC_MAC_HW_FEATURE1_TXFIFOSIZE_SHIFT		 0x6
+#define GMAC_MAC_HW_FEATURE1_RXFIFOSIZE_SHIFT	 	 0x0
+#define GMAC_MAC_HW_FEATURE1_TXFIFOSIZE_MASK		0x1f
+#define GMAC_MAC_HW_FEATURE1_RXFIFOSIZE_MASK		0x1f
+#define GMAC_MTL_TXQ0_OPERATION_MODE_TXQEN_ENABLED       0x2
+
+#define GMAC_DMA_CH0_TX_CONTROL_TXPBL_SHIFT		   16
+#define GMAC_DMA_CH0_TX_CONTROL_TXPBL_MASK		 0x3f
+#define GMAC_DMA_CH0_RX_CONTROL_RXPBL_SHIFT		   16
+#define GMAC_DMA_CH0_RX_CONTROL_RXPBL_MASK		 0x3f
+
+
+static inline void
+clrsetbits_le32(struct eqos_softc *sc, uint32_t addr, uint32_t clear, uint32_t set)
+{
+	 WR4(sc, addr, (RD4(sc, addr) & (~clear)) | set);
+}
+
+static inline void
+setbits_le32(struct eqos_softc *sc, uint32_t addr, uint32_t set)
+{
+	clrsetbits_le32(sc, addr, set, set);
+}
+#endif
+
+static void
+eqos_clean_dma_descs(struct eqos_softc *sc)
+{
+	int i;
+
+	sc->tx.head = 0;
+	sc->tx.tail = 0;
+	for (i = 0; i < TX_DESC_COUNT; i++) {
+		 eqos_setup_txdesc(sc, i, 0, 0, 0, 0);
+	}
+	bus_dmamap_sync(sc->tx.desc_tag, sc->tx.desc_map, BUS_DMASYNC_PREWRITE);
+	
+        bus_dmamap_sync(sc->rx.desc_tag, sc->rx.desc_map,
+            BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
+	sc->rx.head = 0;
+	sc->rx.tail = 0;
+	for (i = 0; i < TX_DESC_COUNT; i++) {
+		if(le32toh(sc->rx.desc_ring[i].des3) & EQOS_RDES3_OWN) 
+			continue; 
+		 eqos_setup_rxbuf(sc, i, sc->rx.buf_map[i].mbuf); 
+	}	
+	
+	bus_dmamap_sync(sc->rx.desc_tag, sc->rx.desc_map, BUS_DMASYNC_PREWRITE);
+}
 
 static void
 eqos_init(void *if_softc)
@@ -524,7 +633,11 @@ eqos_init(void *if_softc)
 	struct eqos_softc *sc = if_softc;
 	if_t ifp = sc->ifp;
 	struct mii_data *mii;
+       	// = device_get_softc(sc->miibus);
 	uint32_t val;
+#ifdef UBOOT_LEACH
+	uint32_t rx_fifo_sz, tx_fifo_sz, rqs, tqs, pbl;
+#endif
 
 	if (if_getdrvflags(ifp) & IFF_DRV_RUNNING)
 		return;
@@ -537,6 +650,125 @@ eqos_init(void *if_softc)
 
 	WR4(sc, GMAC_MAC_1US_TIC_COUNTER, (sc->csr_clock / 1000000) - 1);
 
+
+
+	/* Disable counters */
+	WR4(sc, GMAC_MMC_CONTROL,
+	    GMAC_MMC_CONTROL_CNTFREEZ |
+	    GMAC_MMC_CONTROL_CNTPRST |
+	    GMAC_MMC_CONTROL_CNTPRSTLVL);
+
+#ifndef UBOOT_LEACH
+        /* Configure operation modes */
+        WR4(sc, GMAC_MTL_TXQ0_OPERATION_MODE,
+            GMAC_MTL_TXQ0_OPERATION_MODE_TSF |
+            GMAC_MTL_TXQ0_OPERATION_MODE_TXQEN_EN);
+        WR4(sc, GMAC_MTL_RXQ0_OPERATION_MODE,
+            GMAC_MTL_RXQ0_OPERATION_MODE_RSF |
+            GMAC_MTL_RXQ0_OPERATION_MODE_FEP |
+            GMAC_MTL_RXQ0_OPERATION_MODE_FUP);
+#else
+	/* Configure MTL */
+
+	/* Enable Store and Forward mode for TX */
+	/* Program Tx operating mode */
+	setbits_le32(sc, GMAC_MTL_TXQ0_OPERATION_MODE,
+		     GMAC_MTL_TXQ0_OPERATION_MODE_TSF |
+		     (GMAC_MTL_TXQ0_OPERATION_MODE_TXQEN_ENABLED <<
+		      GMAC_MTL_TXQ0_OPERATION_MODE_TXQEN_SHIFT));
+
+	/* Transmit Queue weight */
+	WR4(sc, GMAC_MTL_TXQ0_QUANTUM_WEIGHT, 0x10);
+
+	/* Enable Store and Forward mode for RX, since no jumbo frame */
+	setbits_le32(sc, GMAC_MTL_RXQ0_OPERATION_MODE,
+		     GMAC_MTL_RXQ0_OPERATION_MODE_RSF);
+
+	/* Transmit/Receive queue fifo size; use all RAM for 1 queue */
+	val = sc->hw_feature[1];
+	tx_fifo_sz = (val >> GMAC_MAC_HW_FEATURE1_TXFIFOSIZE_SHIFT) &
+		GMAC_MAC_HW_FEATURE1_TXFIFOSIZE_MASK;
+	rx_fifo_sz = (val >> GMAC_MAC_HW_FEATURE1_RXFIFOSIZE_SHIFT) &
+		GMAC_MAC_HW_FEATURE1_RXFIFOSIZE_MASK;
+
+	/* r/tx_fifo_sz is encoded as log2(n / 128). Undo that by shifting */
+	tx_fifo_sz = 128 << tx_fifo_sz;
+	rx_fifo_sz = 128 << rx_fifo_sz;
+
+	/* Allow platform to override TX/RX fifo size */
+
+	/* r/tqs is encoded as (n / 256) - 1 */
+	tqs = tx_fifo_sz / 256 - 1;
+	rqs = rx_fifo_sz / 256 - 1;
+	clrsetbits_le32(sc, GMAC_MTL_TXQ0_OPERATION_MODE,
+			GMAC_MTL_TXQ0_OPERATION_MODE_TQS_MASK <<
+			GMAC_MTL_TXQ0_OPERATION_MODE_TQS_SHIFT,
+			tqs << GMAC_MTL_TXQ0_OPERATION_MODE_TQS_SHIFT);
+	clrsetbits_le32(sc, GMAC_MTL_RXQ0_OPERATION_MODE,
+			GMAC_MTL_RXQ0_OPERATION_MODE_RQS_MASK <<
+			GMAC_MTL_RXQ0_OPERATION_MODE_RQS_SHIFT,
+			rqs << GMAC_MTL_RXQ0_OPERATION_MODE_RQS_SHIFT);
+
+	if (rqs >= ((4096 / 256) - 1)) {
+		uint32_t rfd, rfa;
+
+		setbits_le32(sc, GMAC_MTL_RXQ0_OPERATION_MODE,
+			     GMAC_MTL_RXQ0_OPERATION_MODE_EHFC);
+
+		/*
+		 * Set Threshold for Activating Flow Contol space for min 2
+		 * frames ie, (1500 * 1) = 1500 bytes.
+		 *
+		 * Set Threshold for Deactivating Flow Contol for space of
+		 * min 1 frame (frame size 1500bytes) in receive fifo
+		 */
+		if (rqs == ((4096 / 256) - 1)) {
+			/*
+			 * This violates the above formula because of FIFO size
+			 * limit therefore overflow may occur inspite of this.
+			 */
+			rfd = 0x3;	/* Full-3K */
+			rfa = 0x1;	/* Full-1.5K */
+		} else if (rqs == ((8192 / 256) - 1)) {
+			rfd = 0x6;	/* Full-4K */
+			rfa = 0xa;	/* Full-6K */
+		} else if (rqs == ((16384 / 256) - 1)) {
+			rfd = 0x6;	/* Full-4K */
+			rfa = 0x12;	/* Full-10K */
+		} else {
+			rfd = 0x6;	/* Full-4K */
+			rfa = 0x1E;	/* Full-16K */
+		}
+
+		clrsetbits_le32(sc, GMAC_MTL_RXQ0_OPERATION_MODE,
+				(GMAC_MTL_RXQ0_OPERATION_MODE_RFD_MASK <<
+				 GMAC_MTL_RXQ0_OPERATION_MODE_RFD_SHIFT) |
+				(GMAC_MTL_RXQ0_OPERATION_MODE_RFA_MASK <<
+				 GMAC_MTL_RXQ0_OPERATION_MODE_RFA_SHIFT),
+				(rfd <<
+				 GMAC_MTL_RXQ0_OPERATION_MODE_RFD_SHIFT) |
+				(rfa <<
+				 GMAC_MTL_RXQ0_OPERATION_MODE_RFA_SHIFT));
+	}			
+
+	device_printf(sc->dev,"tx_fifo_sz=%u rx_fifo_sz=%u tqs=%u rqs=%u\n",
+			 tx_fifo_sz, rx_fifo_sz, tqs, rqs);
+
+        pbl = tqs + 1; 
+        if (pbl > 32)
+        	pbl = 32;
+        clrsetbits_le32(sc, GMAC_DMA_CHAN0_TX_CONTROL,
+                        GMAC_DMA_CH0_TX_CONTROL_TXPBL_MASK <<
+                        GMAC_DMA_CH0_TX_CONTROL_TXPBL_SHIFT,
+                        pbl << GMAC_DMA_CH0_TX_CONTROL_TXPBL_SHIFT);
+
+        clrsetbits_le32(sc, GMAC_DMA_CHAN0_RX_CONTROL,
+                        GMAC_DMA_CH0_RX_CONTROL_RXPBL_MASK <<
+                        GMAC_DMA_CH0_RX_CONTROL_RXPBL_SHIFT,
+                        8 << GMAC_DMA_CH0_RX_CONTROL_RXPBL_SHIFT);
+
+
+#endif
 	/* Enable transmit and receive DMA */
 	val = RD4(sc, GMAC_DMA_CHAN0_CONTROL);
 	val &= ~GMAC_DMA_CHAN0_CONTROL_DSL_MASK;
@@ -553,31 +785,18 @@ eqos_init(void *if_softc)
 	val |= GMAC_DMA_CHAN0_RX_CONTROL_START;
 	WR4(sc, GMAC_DMA_CHAN0_RX_CONTROL, val);
 
-	/* Disable counters */
-	WR4(sc, GMAC_MMC_CONTROL,
-	    GMAC_MMC_CONTROL_CNTFREEZ |
-	    GMAC_MMC_CONTROL_CNTPRST |
-	    GMAC_MMC_CONTROL_CNTPRSTLVL);
-
-	/* Configure operation modes */
-	WR4(sc, GMAC_MTL_TXQ0_OPERATION_MODE,
-	    GMAC_MTL_TXQ0_OPERATION_MODE_TSF |
-	    GMAC_MTL_TXQ0_OPERATION_MODE_TXQEN_EN);
-	WR4(sc, GMAC_MTL_RXQ0_OPERATION_MODE,
-	    GMAC_MTL_RXQ0_OPERATION_MODE_RSF |
-	    GMAC_MTL_RXQ0_OPERATION_MODE_FEP |
-	    GMAC_MTL_RXQ0_OPERATION_MODE_FUP);
-
 	/* Enable flow control */
 	val = RD4(sc, GMAC_MAC_Q0_TX_FLOW_CTRL);
 	val |= 0xFFFFU << GMAC_MAC_Q0_TX_FLOW_CTRL_PT_SHIFT;
 	val |= GMAC_MAC_Q0_TX_FLOW_CTRL_TFE;
 	WR4(sc, GMAC_MAC_Q0_TX_FLOW_CTRL, val);
+
 	val = RD4(sc, GMAC_MAC_RX_FLOW_CTRL);
 	val |= GMAC_MAC_RX_FLOW_CTRL_RFE;
 	WR4(sc, GMAC_MAC_RX_FLOW_CTRL, val);
 
 	/* set RX queue mode. must be in DCB mode. */
+
 	WR4(sc, GMAC_RXQ_CTRL0, (GMAC_RXQ_CTRL0_EN_MASK << 16) |
 	    GMAC_RXQ_CTRL0_EN_DCB);
 
@@ -596,12 +815,12 @@ eqos_init(void *if_softc)
 	if_setdrvflagbits(ifp, IFF_DRV_RUNNING, IFF_DRV_OACTIVE);
 
 	if (sc->switch_attached) {
-		sc->link_up = true;
-		eqos_mac_change(sc, IFM_ETHER | IFM_1000_T | IFM_FDX);
-	}
+ 		sc->link_up = true;
+ 		eqos_mac_change(sc, IFM_ETHER | IFM_1000_T | IFM_FDX);
+ 	}
 
-	if (sc->phy_attached) {
-		mii = device_get_softc(sc->miibus);
+ 	if (sc->phy_attached) {
+ 		mii = device_get_softc(sc->miibus);
 		mii_mediachg(mii);
 		callout_reset(&sc->callout, hz, eqos_tick, sc);
 	}
@@ -622,7 +841,6 @@ eqos_start_locked(if_t ifp)
 	if ((if_getdrvflags(ifp) & (IFF_DRV_RUNNING|IFF_DRV_OACTIVE)) !=
 	    IFF_DRV_RUNNING)
 		return;
-
 	while (true) {
 		if (TX_QUEUED(sc->tx.head, sc->tx.tail) >=
 		    TX_DESC_COUNT - TX_MAX_SEGS) {
@@ -640,12 +858,10 @@ eqos_start_locked(if_t ifp)
 		}
 		if_bpfmtap(ifp, m);
 		pending++;
-	}
-
+	 }	
 	if (pending) {
 		bus_dmamap_sync(sc->tx.desc_tag, sc->tx.desc_map,
 		    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
-
 		/* Start and run TX DMA */
 		WR4(sc, GMAC_DMA_CHAN0_TX_END_ADDR,
 		    (uint32_t)sc->tx.desc_ring_paddr + DESC_OFFSET(sc->tx.head));
@@ -675,7 +891,7 @@ eqos_stop(struct eqos_softc *sc)
 	if_setdrvflagbits(ifp, 0, IFF_DRV_RUNNING | IFF_DRV_OACTIVE);
 
 	callout_stop(&sc->callout);
-
+	callout_stop(&sc->calltxi);
 	/* Disable receiver */
 	val = RD4(sc, GMAC_MAC_CONFIGURATION);
 	val &= ~GMAC_MAC_CONFIGURATION_RE;
@@ -709,6 +925,7 @@ eqos_stop(struct eqos_softc *sc)
 	val &= ~GMAC_MAC_CONFIGURATION_TE;
 	WR4(sc, GMAC_MAC_CONFIGURATION, val);
 
+	eqos_clean_dma_descs(sc);
 	eqos_disable_intr(sc);
 
 	EQOS_UNLOCK(sc);
@@ -718,38 +935,78 @@ static void
 eqos_rxintr(struct eqos_softc *sc)
 {
 	if_t ifp = sc->ifp;
-	struct mbuf *m;
-	uint32_t rdes3;
-	int error, length;
+	struct mbuf *m, *mh, *mt;
+	uint32_t rdes3, rdes1;
+	int error, length, one = 0, cnt;
+
+	cnt = 0;
+	mh = NULL;
+	mt = NULL;
+	
+	bus_dmamap_sync(sc->rx.desc_tag, sc->rx.desc_map,
+            BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 
 	while (true) {
+
 		rdes3 = le32toh(sc->rx.desc_ring[sc->rx.head].des3);
 		if ((rdes3 & EQOS_RDES3_OWN))
 			break;
-
-		if (rdes3 & (EQOS_RDES3_OE | EQOS_RDES3_RE))
-			printf("Receive error rdes3=%08x\n", rdes3);
-
+		
+		one = 1;
+			
+		error = rdes3 & (EQOS_RDES3_OE | EQOS_RDES3_RE);
+		if(error)
+			printf("Receive errer rdes3=%08x\n", rdes3);
+		
+		length = rdes3 & EQOS_RDES3_LENGTH_MASK;
+		if(!length) {
+			printf("E0\n");
+			eqos_reuse_rxdesc(sc, sc->rx.head);
+			if(error)
+				 if_inc_counter(ifp, IFCOUNTER_IERRORS, 1);
+			continue;
+		}
+			
 		bus_dmamap_sync(sc->rx.buf_tag,
 		    sc->rx.buf_map[sc->rx.head].map, BUS_DMASYNC_POSTREAD);
 		bus_dmamap_unload(sc->rx.buf_tag,
 		    sc->rx.buf_map[sc->rx.head].map);
 
-		length = rdes3 & EQOS_RDES3_LENGTH_MASK;
-		if (length) {
-			m = sc->rx.buf_map[sc->rx.head].mbuf;
-			m->m_pkthdr.rcvif = ifp;
-			m->m_pkthdr.len = length;
-			m->m_len = length;
-			m->m_nextpkt = NULL;
-
-			/* Remove trailing FCS */
-			m_adj(m, -ETHER_CRC_LEN);
-
-			EQOS_UNLOCK(sc);
-			if_input(ifp, m);
-			EQOS_LOCK(sc);
+	
+		m = sc->rx.buf_map[sc->rx.head].mbuf;
+		m->m_pkthdr.rcvif = ifp;
+		m->m_pkthdr.len = length;
+		m->m_len = length;
+		m->m_nextpkt = NULL;
+		rdes1 = le32toh(sc->rx.desc_ring[sc->rx.head].des1);
+		if ((if_getcapenable(ifp) & IFCAP_RXCSUM) != 0  &&
+		    (rdes1 & EQOS_RDES1_IPV4_HEADER) != 0) {
+				m->m_pkthdr.csum_flags = CSUM_IP_CHECKED;
+			 if((rdes1 & EQOS_RDES1_IP_HDR_ERROR) == 0)	
+				m->m_pkthdr.csum_flags |= CSUM_IP_VALID;
+			 if((rdes1 & EQOS_RDES1_IP_CSUM_ERROR) == 0) {
+				m->m_pkthdr.csum_flags |= CSUM_DATA_VALID | CSUM_PSEUDO_HDR;
+				m->m_pkthdr.csum_data = 0xffff;
+			}
 		}
+
+		/* Remove trailing FCS */
+		m_adj(m, -ETHER_CRC_LEN);
+                m->m_nextpkt = NULL;
+                if (mh == NULL)
+                        mh = m;
+                else
+                        mt->m_nextpkt = m;
+                mt = m;
+                ++cnt;
+
+                if (cnt == 64) {
+                        EQOS_UNLOCK(sc);
+                        if_input(ifp, mh);
+                        EQOS_LOCK(sc);
+                        mh = mt = NULL;
+                        cnt = 0;
+                }
 
 		if ((m = eqos_alloc_mbufcl(sc))) {
 			if ((error = eqos_setup_rxbuf(sc, sc->rx.head, m)))
@@ -759,23 +1016,34 @@ eqos_rxintr(struct eqos_softc *sc)
 			if_inc_counter(ifp, IFCOUNTER_IERRORS, 1);
 
 		if_inc_counter(ifp, IFCOUNTER_IPACKETS, 1);
-
-		WR4(sc, GMAC_DMA_CHAN0_RX_END_ADDR,
-		    (uint32_t)sc->rx.desc_ring_paddr + DESC_OFFSET(sc->rx.head));
-
 		sc->rx.head = RX_NEXT(sc->rx.head);
 	}
+	if(one) {
+		WR4(sc, GMAC_DMA_CHAN0_RX_END_ADDR,
+		    (uint32_t)sc->rx.desc_ring_paddr + DESC_OFFSET(sc->rx.head));	
+		bus_dmamap_sync(sc->rx.desc_tag, sc->rx.desc_map, 
+		BUS_DMASYNC_PREWRITE|BUS_DMASYNC_PREREAD);
+		if (mh != NULL) {
+                	EQOS_UNLOCK(sc);
+                	if_input(ifp, mh);
+                	EQOS_LOCK(sc);
+	        }
+
+	} 
 }
 
 static void
-eqos_txintr(struct eqos_softc *sc)
+eqos_txintr(void *arg)
 {
+	struct eqos_softc *sc = (struct eqos_softc *)arg;
 	if_t ifp = sc->ifp;
 	struct eqos_bufmap *bmap;
-	uint32_t tdes3;
+	uint32_t tdes3, one = 0;
+
 
 	EQOS_ASSERT_LOCKED(sc);
-
+	bus_dmamap_sync(sc->tx.desc_tag, sc->tx.desc_map,
+            BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);	
 	while (sc->tx.tail != sc->tx.head) {
 		tdes3 = le32toh(sc->tx.desc_ring[sc->tx.tail].des3);
 		if ((tdes3 & EQOS_TDES3_OWN))
@@ -783,22 +1051,25 @@ eqos_txintr(struct eqos_softc *sc)
 
 		bmap = &sc->tx.buf_map[sc->tx.tail];
 		if (bmap->mbuf) {
+
 			bus_dmamap_sync(sc->tx.buf_tag, bmap->map,
 			    BUS_DMASYNC_POSTWRITE);
+
 			bus_dmamap_unload(sc->tx.buf_tag, bmap->map);
 			m_freem(bmap->mbuf);
 			bmap->mbuf = NULL;
 		}
 
 		eqos_setup_txdesc(sc, sc->tx.tail, 0, 0, 0, 0);
+		one = 1;
 
-		if_setdrvflagbits(ifp, 0, IFF_DRV_OACTIVE);
 
 		/* Last descriptor in a packet contains DMA status */
 		if ((tdes3 & EQOS_TDES3_LD)) {
 			if ((tdes3 & EQOS_TDES3_DE)) {
 				if_inc_counter(ifp, IFCOUNTER_OERRORS, 1);
 			} else if ((tdes3 & EQOS_TDES3_ES)) {
+				device_printf(sc->dev, "dma tx err: %08x\n", tdes3);
 				if_inc_counter(ifp, IFCOUNTER_OERRORS, 1);
 			} else {
 				if_inc_counter(ifp, IFCOUNTER_OPACKETS, 1);
@@ -806,9 +1077,18 @@ eqos_txintr(struct eqos_softc *sc)
 		}
 		sc->tx.tail = TX_NEXT(sc->tx.tail);
 	}
+	
+	if(one)
+	 if_setdrvflagbits(ifp, 0, IFF_DRV_OACTIVE);
 	if (sc->tx.tail == sc->tx.head)
 		sc->tx_watchdog = 0;
+		
+	else
+	 if (TX_QUEUED(sc->tx.head, sc->tx.tail)) {
+	  callout_reset_sbt(&sc->calltxi, SBT_1US * 300, 0, eqos_txintr, sc, 0);
+ 	}
 	eqos_start_locked(sc->ifp);
+		
 }
 
 static void
@@ -884,13 +1164,13 @@ eqos_intr(void *arg)
 	if (dma_status)
 		WR4(sc, GMAC_DMA_CHAN0_STATUS, dma_status);
 
-	EQOS_LOCK(sc);
-
-	if (dma_status & GMAC_DMA_CHAN0_STATUS_RI)
+	EQOS_LOCK(sc);	
+	
+	if (dma_status & GMAC_DMA_CHAN0_STATUS_RI) 
 		eqos_rxintr(sc);
 
-	if (dma_status & GMAC_DMA_CHAN0_STATUS_TI)
-		eqos_txintr(sc);
+	if (dma_status & GMAC_DMA_CHAN0_STATUS_TI)  
+		eqos_txintr(sc);				
 
 	EQOS_UNLOCK(sc);
 
@@ -1006,25 +1286,54 @@ static void
 eqos_axi_configure(struct eqos_softc *sc)
 {
 	uint32_t val;
-
+	uint8_t wr8 = 0x4, rd8 = 0x8;
+	uint16_t blen[AXI_BLEN] = { 0, 0, 0, 0, 16, 8, 4};
+	int i;
+	
+#ifdef FDT
+	wr8 = sc->axi_wr_osr_lmt;
+	rd8 = sc->axi_rd_osr_lmt;
+	memcpy(blen, sc->axi_blen, sizeof(blen));
+#endif	
 	val = RD4(sc, GMAC_DMA_SYSBUS_MODE);
 
 	/* Max Write Outstanding Req Limit */
 	val &= ~GMAC_DMA_SYSBUS_MODE_WR_OSR_LMT_MASK;
-	val |= 0x03 << GMAC_DMA_SYSBUS_MODE_WR_OSR_LMT_SHIFT;
+	val |= wr8 << GMAC_DMA_SYSBUS_MODE_WR_OSR_LMT_SHIFT;
 
 	/* Max Read Outstanding Req Limit */
 	val &= ~GMAC_DMA_SYSBUS_MODE_RD_OSR_LMT_MASK;
-	val |= 0x07 << GMAC_DMA_SYSBUS_MODE_RD_OSR_LMT_SHIFT;
+	val |= rd8 << GMAC_DMA_SYSBUS_MODE_RD_OSR_LMT_SHIFT;
 
 	/* Allowed Burst Length's */
-	val |= GMAC_DMA_SYSBUS_MODE_BLEN16;
-	val |= GMAC_DMA_SYSBUS_MODE_BLEN8;
-	val |= GMAC_DMA_SYSBUS_MODE_BLEN4;
-
+	for (i = 0; i < AXI_BLEN; i++) {
+		device_printf(sc->dev, "axi[%d]=>%d\n",i, blen[i]);
+		switch (blen[i]) {
+		case 256:
+			val |= GMAC_DMA_SYSBUS_MODE_BLEN256;
+			break;
+		case 128:
+			val |= GMAC_DMA_SYSBUS_MODE_BLEN128;
+			break;
+		case 64:
+			val |= GMAC_DMA_SYSBUS_MODE_BLEN64;
+			break;
+		case 32:
+			val |= GMAC_DMA_SYSBUS_MODE_BLEN32;
+			break;
+		case 16:
+			val |= GMAC_DMA_SYSBUS_MODE_BLEN16;
+			break;
+		case 8:
+			val |= GMAC_DMA_SYSBUS_MODE_BLEN8;
+			break;
+		case 4:
+			val |= GMAC_DMA_SYSBUS_MODE_BLEN4;
+			break;
+		}
+	}
 	/* Fixed Burst Length */
 	val |= GMAC_DMA_SYSBUS_MODE_MB;
-
 	WR4(sc, GMAC_DMA_SYSBUS_MODE, val);
 }
 
@@ -1073,7 +1382,7 @@ eqos_setup_dma(struct eqos_softc *sc)
 	if ((error = bus_dma_tag_create(bus_get_dma_tag(sc->dev), 1, 0,
 					BUS_SPACE_MAXADDR_32BIT,
 					BUS_SPACE_MAXADDR, NULL, NULL,
-					MCLBYTES*TX_MAX_SEGS, TX_MAX_SEGS,
+					MCLBYTES * TX_MAX_SEGS, TX_MAX_SEGS,
 					MCLBYTES, 0, NULL, NULL,
 					&sc->tx.buf_tag))) {
 		device_printf(sc->dev, "could not create TX buffer DMA tag.\n");
@@ -1142,7 +1451,7 @@ eqos_setup_dma(struct eqos_softc *sc)
 			return (error);
 		}
 	}
-
+	bus_dmamap_sync(sc->rx.desc_tag, sc->rx.desc_map, BUS_DMASYNC_PREWRITE);
 	if (bootverbose)
 		device_printf(sc->dev, "TX ring @ 0x%lx, RX ring @ 0x%lx\n",
 		    sc->tx.desc_ring_paddr, sc->rx.desc_ring_paddr);
@@ -1232,13 +1541,13 @@ eqos_attach(device_t dev)
 {
 	struct eqos_softc *sc = device_get_softc(dev);
 	if_t ifp;
-	uint32_t ver;
+	uint32_t ver, val;
 	uint8_t eaddr[ETHER_ADDR_LEN];
 	u_int userver, snpsver;
 	int error;
 	int n;
 	int phy;
-	phandle_t node;
+ 	phandle_t node;
 
 	/* setup resources */
 	if (bus_alloc_resources(dev, eqos_spec, sc->res)) {
@@ -1246,15 +1555,14 @@ eqos_attach(device_t dev)
 		bus_release_resources(dev, eqos_spec, sc->res);
 		return (ENXIO);
 	}
-
 	if ((error = IF_EQOS_INIT(dev)))
 		return (error);
 
 	sc->dev = dev;
 
-	sc->phy_attached = 0;
-	sc->switch_attached = 0;
-	node = ofw_bus_get_node(dev);
+ 	sc->phy_attached = 0;
+ 	sc->switch_attached = 0;
+ 	node = ofw_bus_get_node(dev);
 
 	ver  = RD4(sc, GMAC_MAC_VERSION);
 	userver = (ver & GMAC_MAC_VERSION_USERVER_MASK) >>
@@ -1262,9 +1570,9 @@ eqos_attach(device_t dev)
 	snpsver = ver & GMAC_MAC_VERSION_SNPSVER_MASK;
 
 	if (snpsver != 0x51) {
-		device_printf(dev, "EQOS version 0x%02x not supported\n",
+		device_printf(dev, "EQOS version 0x%02xx not supported\n",
 		    snpsver);
-		return (ENXIO);
+/*		return (ENXIO);*/
 	}
 
 	for (n = 0; n < 4; n++)
@@ -1278,8 +1586,11 @@ eqos_attach(device_t dev)
 		    sc->hw_feature[2], sc->hw_feature[3]);
 	}
 
+
+
 	mtx_init(&sc->lock, "eqos lock", MTX_NETWORK_LOCK, MTX_DEF);
 	callout_init_mtx(&sc->callout, &sc->lock, 0);
+	callout_init_mtx(&sc->calltxi, &sc->lock, 0);
 
 	eqos_get_eaddr(sc, eaddr);
 	if (bootverbose)
@@ -1318,20 +1629,30 @@ eqos_attach(device_t dev)
 	if_setinitfn(ifp, eqos_init);
 	if_setsendqlen(ifp, TX_DESC_COUNT - 1);
 	if_setsendqready(ifp);
-	if_setcapabilities(ifp, IFCAP_VLAN_MTU /*| IFCAP_HWCSUM*/);
+
+	val = IFCAP_VLAN_MTU;	
+	if(sc->hw_feature[0] & GMAC_HW_FEAT_TXCOSEL) {
+		val |= IFCAP_TXCSUM;
+	    	if_sethwassist(sc->ifp, CSUM_IP | CSUM_UDP | CSUM_TCP);
+	 }
+	 if(sc->hw_feature[0] & GMAC_HW_FEAT_RXCOESEL)
+	    	val |= IFCAP_RXCSUM;
+        if_setcapabilities(sc->ifp, val);
+        
 	if_setcapenable(ifp, if_getcapabilities(ifp));
 
+	eqos_enable_csum_offload(sc);
 	/* Attach MII driver */
 	if (fdt_get_phyaddr(node, sc->dev, &phy, NULL) == 0) {
 		if ((error = mii_attach(sc->dev, &sc->miibus, ifp, eqos_media_change,
-		    eqos_media_status, BMSR_DEFCAPMASK, phy,
-		    MII_OFFSET_ANY, 0))) {
-			device_printf(sc->dev, "PHY attach failed\n");
+			eqos_media_status, BMSR_DEFCAPMASK, phy,
+			MII_OFFSET_ANY, 0))) {
+			    device_printf(sc->dev, "PHY attach failed\n");
 			return (ENXIO);
 		}
 		sc->phy_attached = 1;
 	} else {
-                /* Fixed-link, use predefined values */
+		/* Fixed-link, use predefined values */
 		ifmedia_init(&sc->eqos_ifmedia, 0,
 				eqos_media_change,
 				eqos_media_status);
@@ -1351,7 +1672,14 @@ eqos_attach(device_t dev)
 		} else {
 			device_printf(dev, "PHY not attached.\n");
 		}
-        }
+	}
+
+	//if ((error = mii_attach(sc->dev, &sc->miibus, ifp, eqos_media_change,
+	//    eqos_media_status, BMSR_DEFCAPMASK, MII_PHY_ANY,
+	//    MII_OFFSET_ANY, MIIF_NOISOLATE * 0))) {
+	//	device_printf(sc->dev, "PHY attach failed\n");
+	//	return (ENXIO);
+	//}
 
 	/* Attach ethernet interface */
 	ether_ifattach(ifp, eaddr);
@@ -1419,7 +1747,10 @@ eqos_detach(device_t dev)
 		}
 		bus_dma_tag_destroy(sc->rx.buf_tag);
 	}
-
+#ifdef FDT
+	if(sc->clks)
+	  	free(sc->clks, M_DEVBUF);
+#endif
 	mtx_destroy(&sc->lock);
 
 	return (0);
@@ -1437,9 +1768,8 @@ static device_method_t eqos_methods[] = {
 	DEVMETHOD(miibus_statchg,	eqos_miibus_statchg),
 
 	/* MDIO interface */
-	DEVMETHOD(mdio_readreg,		eqos_mdio_readreg),
-	DEVMETHOD(mdio_writereg,	eqos_mdio_writereg),
-
+ 	DEVMETHOD(mdio_readreg,		eqos_mdio_readreg),
+ 	DEVMETHOD(mdio_writereg,	eqos_mdio_writereg),
 
 	DEVMETHOD_END
 };

@@ -76,26 +76,35 @@ struct eqos_softc {
 	struct resource 	*res[EQOS_RES_COUNT];
 	void			*irq_handle;
 #ifdef FDT
-	struct syscon		*grf;
+	struct syscon		*grf, *php_grf;
 	int			grf_offset;
+	int			phy_mode;
+	struct eqos_ops		*ops;
+	clk_t			*clks;
+	clk_t			clk_stmmaceth;
+	bool			clock_in;
+	uint8_t			idx;
+	uint8_t			axi_rd_osr_lmt, axi_wr_osr_lmt;
+	uint16_t		axi_blen[AXI_BLEN];
 #endif
 	uint32_t		csr_clock;
 	uint32_t		csr_clock_range;
 	uint32_t		hw_feature[4];
 	bool			link_up;
 	int			tx_watchdog;
-
-	struct ifmedia		eqos_ifmedia;
+	uint8_t			force_thresh_dma_mode;
+	
+	struct ifmedia eqos_ifmedia;
 	struct ifnet		*ifp;
 	device_t		miibus;
 	struct mtx		lock;
-	struct callout		callout;
-
+	struct callout          callout;
+	struct callout          calltxi;	
 	struct eqos_ring	tx;
 	struct eqos_ring	rx;
 
 	int			phy_attached;
-	int			switch_attached;
+ 	int			switch_attached;
 };
 
 DECLARE_CLASS(eqos_driver);
