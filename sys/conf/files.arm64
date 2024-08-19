@@ -198,6 +198,7 @@ dev/acpica/acpi_pci_link.c			optional acpi pci
 dev/acpica/acpi_pcib.c				optional acpi pci
 dev/acpica/acpi_pxm.c				optional acpi
 dev/ahci/ahci_generic.c				optional ahci
+dev/ahci/ahci_dw_fdt.c				optional fdt soc_rockchip_rk3568
 
 cddl/dev/dtrace/aarch64/dtrace_asm.S		optional dtrace compile-with "${DTRACE_S}"
 cddl/dev/dtrace/aarch64/dtrace_subr.c		optional dtrace compile-with "${DTRACE_C}"
