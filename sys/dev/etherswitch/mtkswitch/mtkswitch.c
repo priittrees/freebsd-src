@@ -284,6 +284,9 @@ mtkswitch_attach(device_t dev)
 	mtkswitch_tick(sc);
 	MTKSWITCH_UNLOCK(sc);
 
+#ifdef MT7531
+	mt7531_sysctl_attach(sc);
+#endif
 	return (0);
 }
 
