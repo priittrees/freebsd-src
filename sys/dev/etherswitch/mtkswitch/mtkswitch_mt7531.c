@@ -71,12 +71,12 @@ mtkswitch_phy_read_locked(struct mtkswitch_softc *sc, int phy, int reg)
 
 	while (sc->hal.mtkswitch_read(sc, MTKSWITCH_PIAC) & PIAC_PHY_ACS_ST);
 
-	sc->hal.mtkswitch_write(sc, MTKSWITCH_PIAC, 
-	    PIAC_PHY_ACS_ST | PIAC_MDIO_ST | (reg << PIAC_MDIO_REG_ADDR_OFF) | 
+	sc->hal.mtkswitch_write(sc, MTKSWITCH_PIAC,
+	    PIAC_PHY_ACS_ST | PIAC_MDIO_ST | (reg << PIAC_MDIO_REG_ADDR_OFF) |
 	    (phy << PIAC_MDIO_PHY_ADDR_OFF) | PIAC_MDIO_CMD_READ);
-	
+
 	while ((data = sc->hal.mtkswitch_read(sc,MTKSWITCH_PIAC)) & PIAC_PHY_ACS_ST);
-        
+
 	return ((int)(data & PIAC_MDIO_RW_DATA_MASK));
 
 }
@@ -102,7 +102,7 @@ static int
 mtkswitch_phy_write_locked(struct mtkswitch_softc *sc, int phy, int reg,
     int val)
 {
-	sc->hal.mtkswitch_write(sc, MTKSWITCH_PIAC, 
+	sc->hal.mtkswitch_write(sc, MTKSWITCH_PIAC,
 	    PIAC_PHY_ACS_ST | PIAC_MDIO_ST | (reg << PIAC_MDIO_REG_ADDR_OFF) |
 	    (phy << PIAC_MDIO_PHY_ADDR_OFF) | PIAC_MDIO_CMD_WRITE |
 	    (val & PIAC_MDIO_RW_DATA_MASK));
@@ -225,7 +225,7 @@ mtkswitch_port_init(struct mtkswitch_softc *sc, int port)
 	val = PMCR_CFG_DEFAULT;
 	if (port == sc->cpuport){
 		val |= PMCR_FORCE_LINK | PMCR_FORCE_DPX | PMCR_FORCE_SPD_1000 |
-		    MT7631_PMCR_FORCE_MODE;
+		    MT7631_PMCR_FORCE_MODE | PMCR_MAC_MODE;
 	}
 	/* Set port's MAC to default settings */
 	sc->hal.mtkswitch_write(sc, MTKSWITCH_PMCR(port), val);
@@ -345,7 +345,7 @@ mtkswitch_update_vlan_entry(struct mtkswitch_softc *sc, uint16_t vid,
 	while (sc->hal.mtkswitch_read(sc, MTKSWITCH_VTCR) & VTCR_BUSY);
 
 	/* We use FID 0 */
-	val = VAWD1_IVL_MAC | VAWD1_VTAG_EN | VAWD1_VALID | 
+	val = VAWD1_IVL_MAC | VAWD1_VTAG_EN | VAWD1_VALID |
 	    ((members & VAWD1_MEMBER_MASK) << VAWD1_MEMBER_OFF);
 	sc->hal.mtkswitch_write(sc, MTKSWITCH_VAWD1, val);
 
@@ -421,7 +421,7 @@ mtkswitch_vlan_getvgroup(struct mtkswitch_softc *sc, etherswitch_vlangroup_t *v)
 		MTKSWITCH_UNLOCK(sc);
 		return (0);
 	}
-	
+
 	val = sc->hal.mtkswitch_read(sc, MTKSWITCH_VAWD1);
 	if (val & VAWD1_VALID)
 		v->es_vid |= ETHERSWITCH_VID_VALID;
@@ -462,7 +462,7 @@ mtkswitch_vlan_setvgroup(struct mtkswitch_softc *sc, etherswitch_vlangroup_t *v)
 	for (i = 0; i < sc->info.es_nvlangroups; i++)
 		if (i != v->es_vlangroup && vlan == sc->vlans[i])
 			return (EINVAL);
-	
+
 	sc->vlans[v->es_vlangroup] = vlan;
 
 	/* We currently don't support FID */
@@ -494,7 +494,7 @@ mtkswitch_vlan_get_pvid(struct mtkswitch_softc *sc, int port, int *pvid)
 	*pvid = sc->hal.mtkswitch_read(sc, MTKSWITCH_PPBV1(port));
 	*pvid = PPBV_VID_FROM_REG(*pvid);
 
-	return (0); 
+	return (0);
 }
 
 static int
@@ -540,3 +540,218 @@ mtk_attach_switch_mt7631(struct mtkswitch_softc *sc)
 	sc->hal.mtkswitch_reg_read = mtkswitch_reg_read;
 	sc->hal.mtkswitch_reg_write = mtkswitch_reg_write;
 }
+
+#define MT7530_PORT_MIB_COUNTER(x)	(0x4000 + (x) * 0x100)
+
+struct mt7530_mib_desc {
+	unsigned int size;
+	unsigned int offset;
+	const char *name;
+	const char *desc;
+};
+
+#define MIB_DESC(_s, _o, _n, _d)\
+{				\
+	.size = (_s),		\
+	.offset = (_o),		\
+	.name = (_n),		\
+	.desc = (_d),		\
+}
+
+// vaata üle
+static const
+struct mt7530_mib_desc mt7530_mib[] = {
+	MIB_DESC(1, 0x00, "tx_drop",		"Transmit droped frames"),
+	MIB_DESC(1, 0x04, "tx_crcerrs",		"Transmit CRC errors"),
+	MIB_DESC(1, 0x08, "tx_ucast_frames",	"Transmit good unicast frames"),
+	MIB_DESC(1, 0x0c, "tx_mcast_frames",	"Transmit good multicast frames"),
+	MIB_DESC(1, 0x10, "tx_bcast_frames",	"Transmit good broadcast frames"),
+	MIB_DESC(1, 0x14, "tx_colls",		"Transmit collisions"),
+	MIB_DESC(1, 0x18, "tx_single_colls",	"Transmit single collisions"),
+	MIB_DESC(1, 0x1c, "tx_multi_colls",	"Transmit multiple collisions"),
+	MIB_DESC(1, 0x20, "tx_deferred",	"Transmit deferred frames"),
+	MIB_DESC(1, 0x24, "tx_late_colls",	"Transmit late collisions"),
+	MIB_DESC(1, 0x28, "tx_excess_colls",	"Transmit excessive collisions"),
+	MIB_DESC(1, 0x2c, "tx_pause_frames",	"Transmit pause frames"),
+	MIB_DESC(1, 0x30, "tx_frames_64",	"Transmit 64 bytes frames"),
+	MIB_DESC(1, 0x34, "tx_frames_65_127",	"Transmit 65 to 127 bytes frames"),
+	MIB_DESC(1, 0x38, "tx_frames_128_255",	"Transmit 128 to 255 bytes frames"),
+	MIB_DESC(1, 0x3c, "tx_frames_256_511",	"Transmit 256 to 511 bytes frames"),
+	MIB_DESC(1, 0x40, "tx_frames_512_1023",	"Transmit 512 to 1023 bytes frames"),
+	MIB_DESC(1, 0x44, "tx_frame_1024_max",	"Transmit 1024 to max bytes frames"),
+	MIB_DESC(2, 0x48, "tx_bytes",		"Transmit good bytes"),
+	MIB_DESC(1, 0x60, "rx_drop",		"Receive droped frames"),
+	MIB_DESC(1, 0x64, "rx_pkts_filtered",	"Receive frames is filtered"),
+	MIB_DESC(1, 0x68, "rx_ucast_frames",	"Receive unicast frames"),
+	MIB_DESC(1, 0x6c, "rx_mcast_frames",	"Receive multicast frames"),
+	MIB_DESC(1, 0x70, "rx_bcast_frames",	"Receive broadcast frames"),
+	MIB_DESC(1, 0x74, "rx_align_errs",	"Receive alignment errors"),
+	MIB_DESC(1, 0x78, "rx_crcerrs",		"Receive CRC errors"),
+	MIB_DESC(1, 0x7c, "rx_runts",		"Receive undersized frames"),
+	MIB_DESC(1, 0x80, "rx_fragments",	"Receive fragmented frames"),
+	MIB_DESC(1, 0x84, "rx_oversize_frames",	"Receive oversize frames"),
+	MIB_DESC(1, 0x88, "rx_jabbers",		"Receive jabbers frames"),
+	MIB_DESC(1, 0x8c, "rx_pause_frames",	"Receive pause control frames"),
+	MIB_DESC(1, 0x90, "rx_frames_64",	"Receive 64 bytes frames"),
+	MIB_DESC(1, 0x94, "rx_frames_65_127",	"Receive 65 to 127 bytes frames"),
+	MIB_DESC(1, 0x98, "rx_frames_128_255",	"Receive 128 to 255 bytes frames"),
+	MIB_DESC(1, 0x9c, "rx_frames_256_511",	"Receive 256 to 511 bytes frames"),
+	MIB_DESC(1, 0xa0, "rx_frames_512_1023",	"Receive 512 to 1023 bytes frames"),
+	MIB_DESC(1, 0xa4, "rx_frame_1024_max",	"Receive 1024 to max bytes frames"),
+	MIB_DESC(2, 0xa8, "rx_bytes",		"Receive good bytes"),
+	MIB_DESC(1, 0xb0, "rx_ctrl_drop",	"Receive droped frames"),
+	MIB_DESC(1, 0xb4, "rx_ingress_drop",	"Receive droped by ingress rate limited"),
+	MIB_DESC(1, 0xb8, "rx_arl_drop",	"Receive droped by ACL"),
+};
+
+static int64_t
+mt7531_hw_port_mib_read_count(struct mtkswitch_softc *sc, int port, int index)
+{
+	const struct mt7530_mib_desc *mib;
+	uint64_t val;
+	uint32_t reg, hi;
+
+	MTKSWITCH_LOCK_ASSERT(sc, MA_OWNED);
+
+	mib = &mt7530_mib[index];
+	reg = MT7530_PORT_MIB_COUNTER(port) + mib->offset;
+
+	val = sc->hal.mtkswitch_read(sc, reg);
+	if (mib->size == 2) {
+		hi = sc->hal.mtkswitch_read(sc, reg + 4);
+		val |= ((uint64_t) hi << 32);
+	}
+
+	return val;
+}
+
+static int
+mt7531_hw_port_mib_clear(struct mtkswitch_softc *sc, int port,
+     int index, uint32_t val)
+{
+	uint32_t reg;
+
+	MTKSWITCH_LOCK_ASSERT(sc, MA_OWNED);
+
+	reg = MT7530_PORT_MIB_COUNTER(port) + index;
+
+	return sc->hal.mtkswitch_write(sc, reg, val);
+}
+
+struct mt7531_sysctl_mib {
+        struct mtkswitch_softc  *sc;
+        int                     index;
+        int                     port;
+};
+
+static int
+mt7531_sysctl_port_mib_read_count(SYSCTL_HANDLER_ARGS)
+{
+	struct mtkswitch_softc *sc;
+	uint64_t val = 0;
+	uint32_t reg = (uint32_t)arg2;
+	uint32_t port  = ((reg >> 16) & 0xffff);
+	uint32_t index = (reg & 0xffff);
+
+	sc = (struct mtkswitch_softc *)arg1;
+	if (sc == NULL)
+		return (EINVAL);
+
+	if (index < 0 || index > nitems(mt7530_mib))
+		return (EINVAL);
+
+	if (port < 0 || port > MTKSWITCH_MAX_PORTS)
+		return (EINVAL);
+
+	MTKSWITCH_LOCK_ASSERT(sc, MA_OWNED);
+	MTKSWITCH_LOCK(sc);
+	val = mt7531_hw_port_mib_read_count(sc, port, index);
+	MTKSWITCH_UNLOCK(sc);
+
+	return sysctl_handle_64(oidp, &val, 0, req);
+}
+
+static int
+mt7531_sysctl_port_mib_clear_count(SYSCTL_HANDLER_ARGS)
+{
+	struct mtkswitch_softc *sc;
+	uint32_t val = 0;
+	uint32_t reg = (uint32_t)arg2;
+	uint32_t port  = ((reg >> 16) & 0xffff);
+	uint32_t index = (reg & 0xffff);
+	int error;
+
+	sc = (struct mtkswitch_softc *)arg1;
+	if (sc == NULL)
+		return (EINVAL);
+
+	//if (index < 0 || index > nitems(mt7530_mib))
+	//	return (EINVAL);
+
+	if (port < 0 || port > MTKSWITCH_MAX_PORTS)
+		return (EINVAL);
+
+	error = sysctl_handle_32(oidp, &val, 0, req);
+
+	if (error || !req->newptr)
+		return (error);
+
+	MTKSWITCH_LOCK_ASSERT(sc, MA_OWNED);
+	MTKSWITCH_LOCK(sc);
+	mt7531_hw_port_mib_clear(sc, port, index, val);
+	MTKSWITCH_UNLOCK(sc);
+
+	return (0);
+}
+
+int
+mt7531_sysctl_attach(struct mtkswitch_softc *sc)
+{
+	struct sysctl_ctx_list *ctx;
+	struct sysctl_oid *tree;
+	struct sysctl_oid *ptree;
+	struct sysctl_oid_list *children;
+	struct sysctl_oid_list *pchildren;
+	struct sysctl_oid_list *ichildren;
+
+	char port_num_buf[32];
+	uint32_t reg;
+	int index, port;
+
+	ctx = device_get_sysctl_ctx(sc->sc_dev);
+	children = SYSCTL_CHILDREN(device_get_sysctl_tree(sc->sc_dev));
+
+	tree = SYSCTL_ADD_NODE(ctx, children, OID_AUTO, "port",
+	    CTLFLAG_RD | CTLFLAG_MPSAFE, 0,
+	     "ethernet stndard mib counters of ports");
+	pchildren = SYSCTL_CHILDREN(tree);
+
+	for (port = 0; port < MTKSWITCH_MAX_PORTS; port++) {
+		snprintf(port_num_buf, sizeof(port_num_buf), "%d", port);
+		ptree = SYSCTL_ADD_NODE(ctx, pchildren, port,
+		    port_num_buf, CTLFLAG_RD | CTLFLAG_MPSAFE,
+		    NULL, "port mib counters");
+		ichildren = SYSCTL_CHILDREN(ptree);
+		for (index = 0; index <  nitems(mt7530_mib); index++) {
+			reg = ((port << 16) | index);
+
+			SYSCTL_ADD_PROC(ctx, ichildren, index,
+			    mt7530_mib[index].name,
+			    CTLTYPE_U64 | CTLFLAG_RD | CTLFLAG_MPSAFE,
+			    sc, reg, mt7531_sysctl_port_mib_read_count,
+			    "LU", mt7530_mib[index].desc);
+		}
+		reg = ((port << 16) | 0xD0);
+		SYSCTL_ADD_PROC(ctx, ichildren, OID_AUTO,
+		    "clear_tx", CTLTYPE_UINT | CTLFLAG_WR | CTLFLAG_MPSAFE,
+		     sc, reg, mt7531_sysctl_port_mib_clear_count,
+		     "IU", "Clear TX Counters");
+		reg = ((port << 16) | 0xD4);
+		SYSCTL_ADD_PROC(ctx, ichildren, OID_AUTO,
+		    "clear_rx", CTLTYPE_UINT | CTLFLAG_WR | CTLFLAG_MPSAFE,
+		     sc, reg, mt7531_sysctl_port_mib_clear_count,
+		     "IU", "Clear RX Counters");
+	}
+	return (0);
+}
+

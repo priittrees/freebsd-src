@@ -180,6 +180,7 @@ extern void mtk_attach_switch_rt3050(struct mtkswitch_softc *);
 extern void mtk_attach_switch_mt7620(struct mtkswitch_softc *);
 #else
 extern void mtk_attach_switch_mt7631(struct mtkswitch_softc *);
+extern int mt7531_sysctl_attach(struct mtkswitch_softc *sc);
 #endif
 
 #endif	/* __MTKSWITCHVAR_H__ */
