@@ -183,6 +183,71 @@ mtkswitch_reset(struct mtkswitch_softc *sc)
 	return (0);
 }
 
+static void
+mtkswitch_setup_xtal(struct mtkswitch_softc *sc, uint32_t xtal)
+{
+	uint32_t val;
+
+	/* Step 1 : Disable MT7531 COREPLL */
+	val = sc->hal.mtkswitch_read(sc, MT7531_PLLGP);
+	val &= ~PLLGP_COREPLL;
+	sc->hal.mtkswitch_write(sc, MT7531_PLLGP, val);
+
+	/* Step 2: switch to XTAL output */
+	val = sc->hal.mtkswitch_read(sc, MT7531_PLLGP);
+	val |= PLLGP_SW_CLKSW;
+	sc->hal.mtkswitch_write(sc, MT7531_PLLGP, val);
+
+	val = sc->hal.mtkswitch_read(sc, MT7531_PLLGP_CR0);
+	val &= ~PLLGP_RG_COREPLL;
+	sc->hal.mtkswitch_write(sc, MT7531_PLLGP_CR0, val);
+
+	/* Step 3: disable PLLGP and enable program PLLGP */
+	val = sc->hal.mtkswitch_read(sc, MT7531_PLLGP);
+	val |= PLLGP_SW_PLLGP;
+	sc->hal.mtkswitch_write(sc, MT7531_PLLGP, val);
+
+	/* Step 4: program COREPLL output frequency to 500MHz */
+	val = sc->hal.mtkswitch_read(sc, MT7531_PLLGP_CR0);
+	val &= ~PLLGP_RG_COREPLL_POSDIV_M;
+	val |= 2 << PLLGP_RG_COREPLL_POSDIV_S;
+	sc->hal.mtkswitch_write(sc, MT7531_PLLGP_CR0, val);
+	DELAY(35);
+
+	val = sc->hal.mtkswitch_read(sc, MT7531_PLLGP_CR0);
+	val &= ~PLLGP_RG_COREPLL_SDM_PCW_M;
+	val |= xtal << PLLGP_RG_COREPLL_SDM_PCW_S;
+	sc->hal.mtkswitch_write(sc, MT7531_PLLGP_CR0, val);
+
+	/* Set feedback divide ratio update signal to high */
+	val = sc->hal.mtkswitch_read(sc, MT7531_PLLGP_CR0);
+	val |= PLLGP_RG_COREPLL_SDM_PCW_CHG;
+	sc->hal.mtkswitch_write(sc, MT7531_PLLGP_CR0, val);
+	/* Wait for at least 16 XTAL clocks */
+	DELAY(20);
+
+	/* Step 5: set feedback divide ratio update signal to low */
+	val = sc->hal.mtkswitch_read(sc, MT7531_PLLGP_CR0);
+	val &= ~PLLGP_RG_COREPLL_SDM_PCW_CHG;
+	sc->hal.mtkswitch_write(sc, MT7531_PLLGP_CR0, val);
+
+	/* Enable 325M clock for SGMII */
+	sc->hal.mtkswitch_write(sc, MT7531_ANA_PLLGP_CR5, 0xad0000);
+
+	/* Enable 250SSC clock for RGMII */
+	sc->hal.mtkswitch_write(sc, MT7531_ANA_PLLGP_CR2, 0x4f40000);
+
+	/* Step 6: Enable MT7531 PLL */
+	val = sc->hal.mtkswitch_read(sc, MT7531_PLLGP_CR0);
+	val |= PLLGP_RG_COREPLL;
+	sc->hal.mtkswitch_write(sc, MT7531_PLLGP_CR0, val);
+
+	val = sc->hal.mtkswitch_read(sc, MT7531_PLLGP);
+	val |= PLLGP_COREPLL;
+	sc->hal.mtkswitch_write(sc, MT7531_PLLGP, val);
+	DELAY(35);
+}
+
 static int
 mtkswitch_hw_setup(struct mtkswitch_softc *sc)
 {
@@ -191,6 +256,37 @@ mtkswitch_hw_setup(struct mtkswitch_softc *sc)
 	 * TODO: parse the device tree and see if we need to configure
 	 *       ports, etc. differently. For now we fallback to defaults.
 	 */
+
+	uint32_t crev, topsig, val, xtal;
+
+	crev = sc->hal.mtkswitch_read(sc, MTKSWITCH_CREV);
+	topsig  = sc->hal.mtkswitch_read(sc, MT7531_TOP_SIG_SR);
+
+	/* Print chip name and revision. In future need
+	 * to move other place and mayby can use it.
+	 */
+	device_printf(sc->sc_dev, "chip %s rev 0x%x\n",
+		topsig & PAD_DUAL_SGMII ? "MT7531AE" : "MT7531BE",
+		CREV_CHIP_REV(crev));
+
+	/* MT7531AE has got two SGMII units. One for port 5, one for port 6.
+	 * MT7531BE has got only one SGMII unit which is for port 6.
+	 */
+	if (topsig & PAD_DUAL_SGMII)
+		return (0);
+
+	/* on linux rev is checked. if it bigger than 0
+	 * and SMI is enabled then 40MHz other 25MHz
+	 * else hwstrap is set then 25MHz other 40MHz
+	 */
+
+	val = sc->hal.mtkswitch_read(sc, MTKSWITCH_STRAP);
+	if (val & STRAP_XTAL)	/* starp is set 25MHz */
+		xtal = MT7531_XTAL_25MHZ;
+	else 	/* starp is not set. Then is used 40MHz */
+		xtal = MT7531_XTAL_40MHZ;
+
+	mtkswitch_setup_xtal(sc, xtal);
 
 	/* Called early and hence unlocked */
 	return (0);
