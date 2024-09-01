@@ -121,4 +121,43 @@
 #define MTKSWITCH_GLOBAL_PHY	31
 #define	MTKSWITCH_GLOBAL_REG	31
 
+#define	MTKSWITCH_STRAP		0x7800
+#define	MTKSWITCH_SWSTRAP	0x7804
+#define		STRAP_TM_STRAP		(1u<<0)
+#define		STRAP_EEPROM_MODE	(1u<<1)
+#define		STRAP_PWR_ON_LIGHT	(1u<<2)
+#define		STRAP_PWR_ON_PLL	(1u<<3)
+#define		STRAP_EEE		(1u<<4)
+#define		STRAP_AUTO_EEPROM	(1u<<5)
+#define		STRAP_PHY		(1u<<6)
+#define		STRAP_XTAL		(1u<<7)	/* 1 25MHz 0 40MHz */
+#define		SWSTRAP_CH_STRAP	(1u<<9)
+
+#define	MT7531_TOP_SIG_SR		0x780c
+#define		PAD_DUAL_SGMII			(1u << 1)
+#define		PAD_MCM_SMI			(1u << 0)
+
+#define	MTKSWITCH_CREV			0x781C
+#define		CREV_CHIP_NAME(x)	((x >> 16) & 0xFFFF)
+#define		CREV_CHIP_REV(x)	(x & 0xF)
+
+#define	MT7531_PLLGP			0x7820
+#define		PLLGP_COREPLL			(1u << 2)
+#define		PLLGP_SW_CLKSW			(1u << 1)
+#define		PLLGP_SW_PLLGP			(1u << 0)
+
+#define	MT7531_PLLGP_CR0		0x78a8
+#define		PLLGP_RG_COREPLL		(1u << 22)
+#define		PLLGP_RG_COREPLL_POSDIV_S	23
+#define		PLLGP_RG_COREPLL_POSDIV_M	0x3800000
+#define		PLLGP_RG_COREPLL_SDM_PCW_S	1
+#define		PLLGP_RG_COREPLL_SDM_PCW_M	0x3ffffe
+#define 		MT7531_XTAL_25MHZ	0x140000
+#define 		MT7531_XTAL_40MHZ	0x190000
+#define		PLLGP_RG_COREPLL_SDM_PCW_CHG	(1u << 0)
+
+/* RGMII and SGMII PLL clock */
+#define MT7531_ANA_PLLGP_CR2		0x78b0
+#define MT7531_ANA_PLLGP_CR5		0x78bc
+
 #endif	/* __MTKSWITCH_MT7531_H__ */
