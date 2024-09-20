@@ -851,3 +851,94 @@ mt7531_sysctl_attach(struct mtkswitch_softc *sc)
 	return (0);
 }
 
+static int
+mt7531_arl_fetch_entry(struct mtkswitch_softc *sc, etherswitch_atu_entry_t *e)
+{
+
+	uint32_t tsra1, tsra2, tsrd;
+
+	tsra1 = sc->hal.mtkswitch_read(sc, MT7531_TSRA1);
+	tsra2 = sc->hal.mtkswitch_read(sc, MT7531_TSRA2);
+	tsrd  = sc->hal.mtkswitch_read(sc, MT7531_TSRD);
+
+	/* MAC address */
+	e->es_macaddr[5] = ((tsra2 >> 16) & 0xFF);
+	e->es_macaddr[4] = ((tsra2 >> 24) & 0xFF);
+	e->es_macaddr[3] = ((tsra1 >>  0) & 0xFF);
+	e->es_macaddr[2] = ((tsra1 >>  8) & 0xFF);
+	e->es_macaddr[1] = ((tsra1 >> 16) & 0xFF);
+	e->es_macaddr[0] = ((tsra1 >> 24) & 0xFF);
+
+	/* Bitmask of ports this entry is for */
+	e->es_portmask = ((tsrd >> 4) & 0xFF);
+
+	return 0;
+}
+
+static void mt7531_is_atc_busy(struct mtkswitch_softc *sc)
+{
+	uint32_t val;
+	do {
+		val = sc->hal.mtkswitch_read(sc,MT7531_ATC);
+	} while(val & MT7531_ATC_BUSY);
+}
+
+int
+mt7531_atu_fetch_table(device_t dev, etherswitch_atu_table_t *table)
+{
+	struct mtkswitch_softc *sc;
+	int nitems;
+	uint32_t val;
+
+	sc = device_get_softc(dev);
+
+	MTKSWITCH_LOCK_ASSERT(sc, MA_OWNED);
+
+	memset(&sc->atu.entries, 0, sizeof(sc->atu.entries));
+
+	table->es_nitems = 0;
+	nitems = 0;
+
+	MTKSWITCH_LOCK(sc);
+	sc->atu.count = 0;
+
+	sc->hal.mtkswitch_write(sc, MT7531_ATC,
+	    (MT7531_ATC_BUSY | MT7531_AC_CMD_SSC));
+	mt7531_is_atc_busy(sc);
+	val = sc->hal.mtkswitch_read(sc, MT7531_ATC);
+	while(!((val) & MT7531_ATC_SRCH_END)) {
+		mt7531_arl_fetch_entry(sc, &sc->atu.entries[nitems]);
+		sc->atu.entries[nitems].id = nitems;
+		nitems++;
+		sc->hal.mtkswitch_write(sc, MT7531_ATC,
+		    (MT7531_ATC_BUSY | MT7531_AC_CMD_NSC));
+		mt7531_is_atc_busy(sc);
+		val = sc->hal.mtkswitch_read(sc, MT7531_ATC);
+	}
+	sc->atu.count = nitems;
+	table->es_nitems = nitems;
+	MTKSWITCH_UNLOCK(sc);
+
+	return (0);
+}
+
+int
+mt7531_atu_fetch_table_entry(device_t dev, etherswitch_atu_entry_t *e)
+{
+	struct mtkswitch_softc *sc;
+	int id, err = 0;
+	sc = device_get_softc(dev);
+	MTKSWITCH_LOCK_ASSERT(sc, MA_OWNED);
+
+	id = e->id;
+
+	MTKSWITCH_LOCK(sc);
+	if (id > sc->atu.count) {
+		err = ENOENT;
+		goto done;
+	}
+	memcpy(e, &sc->atu.entries[id], sizeof(*e));
+done:
+	MTKSWITCH_UNLOCK(sc);
+	return (err);
+}

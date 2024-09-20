@@ -160,4 +160,19 @@
 #define MT7531_ANA_PLLGP_CR2		0x78b0
 #define MT7531_ANA_PLLGP_CR5		0x78bc
 
+#define	MT7531_ATC	0x80
+#define			MT7531_AC_CMD_RD	0x00
+#define			MT7531_AC_CMD_RW	0x01
+#define			MT7531_AC_CMD_CLN	0x02
+#define			MT7531_AC_CMD_SSC	0x04
+#define			MT7531_AC_CMD_NSC	0x05
+
+#define			MT7531_ATC_ADDR_INVLD	(1u<<12)
+#define			MT7531_ATC_SRCH_HIT	(1u<<13)
+#define			MT7531_ATC_SRCH_END	(1u<<14)
+#define			MT7531_ATC_BUSY		(1u<<15)
+#define	MT7531_TSRA1	0x84
+#define	MT7531_TSRA2	0x88
+#define	MT7531_TSRD	0x8C
+
 #endif	/* __MTKSWITCH_MT7531_H__ */
