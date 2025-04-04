@@ -1,0 +1,24 @@
+ident           BPI-R64
+cpu		ARM64
+
+options 	FDT
+
+#option		EARLY_PRINTF
+#option		SOCDEV_PA=0x11000000
+#option		SOCDEV_VA=0x11000000
+
+makeoptions     MODULES_OVERRIDE=""
+
+include         "std.arm64"
+include         "std.dev"
+
+device		mtk_sys_cirq
+
+# MMC/SD/SDIO Card slot support
+device          sdhci                   # SD controller
+device          mmc                     # mmc/sd bus
+device          mmcsd                   # mmc/sd flash cards
+
+# Console and misc
+device          uart_ns8250
+device		uart_mtk
