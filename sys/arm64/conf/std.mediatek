@@ -19,6 +19,11 @@ device      mt7531_switch
 device 		mdio
 #device		mt7622_eth
 
+# Ethernet, BPF and bridge support
+device          rt
+device          bpf
+device          if_bridge
+
 # MMC/SD/SDIO Card slot support
 device		sdhci		# SD controller
 device		mmc		# mmc/sd bus
