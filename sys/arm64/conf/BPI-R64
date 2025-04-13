@@ -22,3 +22,12 @@ device          mmcsd                   # mmc/sd flash cards
 # Console and misc
 device          uart_ns8250
 device		uart_mtk
+
+# Ethernet, BPF and bridge support
+device          rt
+device          bpf
+device          if_bridge
+
+# Ethernet switch
+device		etherswitch             # Enable etherswitch support
+device		mtkswitch

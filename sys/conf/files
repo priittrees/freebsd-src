@@ -5250,3 +5250,7 @@ xdr/xdr_sizeof.c		optional xdr | krpc | nfslockd | nfscl | nfsd
 arm/mediatek/uart_dev_mtk.c	optional uart uart_mtk fdt
 arm/mediatek/mtk_sys_cirq.c	optional mtk_sys_cirq fdt
 arm/mediatek/mtk_mmc.c		optional mmc fdt
+
+# Ralink/Mediatek Ethernet driver
+arm/mediatek/if_rt.c                    optional rt
+
