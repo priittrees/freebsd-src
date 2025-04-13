@@ -18,6 +18,11 @@ device		mtkswitch       # Enable mediatek 7531 switch
 device 		miibus
 device 		mdio
 
+# Ethernet, BPF and bridge support
+device          rt
+device          bpf
+device          if_bridge
+
 # MMC/SD/SDIO Card slot support
 device		sdhci		# SD controller
 device		mmc		# mmc/sd bus

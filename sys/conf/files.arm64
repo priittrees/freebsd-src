@@ -804,3 +804,5 @@ arm64/mediatek/mt_mmc.c			            optional mmc fdt soc_mediatek
 #arm64/mediatek/mt_xhci.c			optional xhci fdt
 arm64/mediatek/mt7622_tphy.c			optional fdt soc_mediatek
 arm64/mediatek/mt7622_rng.c                     optional fdt soc_mediatek
+# Ralink/Mediatek Ethernet driver
+arm/mediatek/if_rt.c				optional rt
