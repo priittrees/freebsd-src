@@ -103,8 +103,8 @@ static int	rt_detach(device_t dev);
 static void	rt_init_locked(void *priv);
 static void	rt_init(void *priv);
 static void	rt_stop_locked(void *priv);
-static void	rt_start(struct ifnet *ifp);
-static int	rt_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data);
+static void	rt_start(if_t ifp);
+static int	rt_ioctl(if_t ifp, u_long cmd, caddr_t data);
 static void	rt_periodic(void *arg);
 static void	rt_tx_watchdog(void *arg);
 static void	rt_rt5350_intr(void *arg);
@@ -149,8 +149,8 @@ void		rt_miibus_statchg(device_t);
 static int	rt_miibus_readreg(device_t, int, int);
 static int	rt_miibus_writereg(device_t, int, int, int);
 #endif
-static int	rt_ifmedia_upd(struct ifnet *);
-static void	rt_ifmedia_sts(struct ifnet *, struct ifmediareq *);
+static int	rt_ifmedia_upd(if_t );
+static void	rt_ifmedia_sts(if_t , struct ifmediareq *);
 
 static SYSCTL_NODE(_hw, OID_AUTO, rt, CTLFLAG_RD | CTLFLAG_MPSAFE, 0,
     "RT driver parameters");
@@ -344,7 +344,7 @@ static int
 rt_attach(device_t dev)
 {
 	struct rt_softc *sc;
-	struct ifnet *ifp;
+	if_t ifp;
 	int error, i;
 
 #if 0
@@ -477,20 +477,18 @@ rt_attach(device_t dev)
 		goto fail;
 	}
 
-	ifp->if_softc = sc;
+	if_setsoftc(ifp, sc);
 	if_initname(ifp, device_get_name(sc->dev), device_get_unit(sc->dev));
-	ifp->if_flags = IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST;
-	ifp->if_init = rt_init;
-	ifp->if_ioctl = rt_ioctl;
-	ifp->if_start = rt_start;
+	if_setflags(ifp, IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST);
+	if_setinitfn(ifp, rt_init);
+	if_setioctlfn(ifp, rt_ioctl);
+	if_setstartfn(ifp, rt_start);
 #define	RT_TX_QLEN	256
-
-	IFQ_SET_MAXLEN(&ifp->if_snd, RT_TX_QLEN);
-	ifp->if_snd.ifq_drv_maxlen = RT_TX_QLEN;
-	IFQ_SET_READY(&ifp->if_snd);
+	if_setsendqlen(ifp, RT_TX_QLEN);
+	if_setsendqready(ifp);
 
 #ifdef IF_RT_PHY_SUPPORT
-	device_printf("IF_RT_PHY_SUPPORT\n");
+	//device_printf("IF_RT_PHY_SUPPORT\n");
 	error = mii_attach(dev, &sc->rt_miibus, ifp, rt_ifmedia_upd,
 	    rt_ifmedia_sts, BMSR_DEFCAPMASK, MII_PHY_ANY, MII_OFFSET_ANY, 0);
 	if (error != 0) {
@@ -499,12 +497,11 @@ rt_attach(device_t dev)
 		goto fail;
 	}
 #else
-
-	device_printf(sc->dev, "IF_RT_ONLY_MAC\n");
+	// device_printf(sc->dev, "IF_RT_ONLY_MAC\n");
 	ifmedia_init(&sc->rt_ifmedia, 0, rt_ifmedia_upd, rt_ifmedia_sts);
-	ifmedia_add(&sc->rt_ifmedia, IFM_ETHER | IFM_100_TX | IFM_FDX, 0,
+	ifmedia_add(&sc->rt_ifmedia, IFM_ETHER | IFM_1000_T | IFM_FDX, 0,
 	    NULL);
-	ifmedia_set(&sc->rt_ifmedia, IFM_ETHER | IFM_100_TX | IFM_FDX);
+	ifmedia_set(&sc->rt_ifmedia, IFM_ETHER | IFM_1000_T | IFM_FDX);
 
 #endif /* IF_RT_PHY_SUPPORT */
 
@@ -528,11 +525,12 @@ rt_attach(device_t dev)
 	/*
 	 * Tell the upper layer(s) we support long frames.
 	 */
-	ifp->if_hdrlen = sizeof(struct ether_vlan_header);
-	ifp->if_capabilities |= IFCAP_VLAN_MTU;
-	ifp->if_capenable |= IFCAP_VLAN_MTU;
-	ifp->if_capabilities |= IFCAP_RXCSUM|IFCAP_TXCSUM;
-	ifp->if_capenable |= IFCAP_RXCSUM|IFCAP_TXCSUM;
+	// if_sethdrlen(ifp, sizeof(struct ether_vlan_header));
+	if_setifheaderlen(ifp, sizeof(struct ether_vlan_header));
+	if_setcapabilitiesbit(ifp, IFCAP_VLAN_MTU, 0);
+	if_setcapenablebit(ifp, IFCAP_VLAN_MTU, 0);
+	if_setcapabilitiesbit(ifp, IFCAP_RXCSUM|IFCAP_TXCSUM, 0);
+	if_setcapenablebit(ifp, IFCAP_RXCSUM|IFCAP_TXCSUM, 0);
 
 	/* init task queue */
 	NET_TASK_INIT(&sc->rx_done_task, 0, rt_rx_done_task, sc);
@@ -588,7 +586,7 @@ fail:
  * Set media options.
  */
 static int
-rt_ifmedia_upd(struct ifnet *ifp)
+rt_ifmedia_upd(if_t ifp)
 {
 	struct rt_softc *sc;
 #ifdef IF_RT_PHY_SUPPORT
@@ -596,7 +594,7 @@ rt_ifmedia_upd(struct ifnet *ifp)
 	struct mii_softc *miisc;
 	int error = 0;
 
-	sc = ifp->if_softc;
+	sc = if_getsoftc(ifp);
 	RT_SOFTC_LOCK(sc);
 
 	mii = device_get_softc(sc->rt_miibus);
@@ -612,7 +610,7 @@ rt_ifmedia_upd(struct ifnet *ifp)
 	struct ifmedia *ifm;
 	struct ifmedia_entry *ife;
 
-	sc = ifp->if_softc;
+	sc = if_getsoftc(ifp);
 	ifm = &sc->rt_ifmedia;
 	ife = ifm->ifm_cur;
 
@@ -636,13 +634,13 @@ rt_ifmedia_upd(struct ifnet *ifp)
  * Report current media status.
  */
 static void
-rt_ifmedia_sts(struct ifnet *ifp, struct ifmediareq *ifmr)
+rt_ifmedia_sts(if_t ifp, struct ifmediareq *ifmr)
 {
 #ifdef IF_RT_PHY_SUPPORT
 	struct rt_softc *sc;
 	struct mii_data *mii;
 
-	sc = ifp->if_softc;
+	sc = if_getsoftc(ifp);
 
 	RT_SOFTC_LOCK(sc);
 	mii = device_get_softc(sc->rt_miibus);
@@ -663,7 +661,7 @@ static int
 rt_detach(device_t dev)
 {
 	struct rt_softc *sc;
-	struct ifnet *ifp;
+	if_t ifp;
 	int i;
 
 	sc = device_get_softc(dev);
@@ -673,7 +671,7 @@ rt_detach(device_t dev)
 
 	RT_SOFTC_LOCK(sc);
 
-	ifp->if_drv_flags &= ~(IFF_DRV_RUNNING | IFF_DRV_OACTIVE);
+	if_setdrvflagbits(ifp, 0, (IFF_DRV_RUNNING | IFF_DRV_OACTIVE));
 
 	callout_stop(&sc->periodic_ch);
 	callout_stop(&sc->tx_watchdog_ch);
@@ -717,7 +715,7 @@ static void
 rt_init_locked(void *priv)
 {
 	struct rt_softc *sc;
-	struct ifnet *ifp;
+	if_t ifp;
 #ifdef IF_RT_PHY_SUPPORT
 	struct mii_data *mii;
 #endif
@@ -838,8 +836,8 @@ rt_init_locked(void *priv)
 	if (mii) mii_mediachg(mii);
 #endif /* IF_RT_PHY_SUPPORT */
 
-	ifp->if_drv_flags &= ~IFF_DRV_OACTIVE;
-	ifp->if_drv_flags |= IFF_DRV_RUNNING;
+	if_setdrvflagbits(ifp, 0, IFF_DRV_OACTIVE);
+	if_setdrvflagbits(ifp, IFF_DRV_RUNNING, 0);
 
 	sc->periodic_round = 0;
 
@@ -872,7 +870,7 @@ static void
 rt_stop_locked(void *priv)
 {
 	struct rt_softc *sc;
-	struct ifnet *ifp;
+	if_t ifp;
 
 	sc = priv;
 	ifp = sc->ifp;
@@ -881,7 +879,7 @@ rt_stop_locked(void *priv)
 
 	RT_SOFTC_ASSERT_LOCKED(sc);
 	sc->tx_timer = 0;
-	ifp->if_drv_flags &= ~(IFF_DRV_RUNNING | IFF_DRV_OACTIVE);
+	if_setdrvflagbits(ifp, 0, (IFF_DRV_RUNNING | IFF_DRV_OACTIVE));
 	callout_stop(&sc->periodic_ch);
 	callout_stop(&sc->tx_watchdog_ch);
 	RT_SOFTC_UNLOCK(sc);
@@ -925,7 +923,7 @@ static int
 rt_tx_data(struct rt_softc *sc, struct mbuf *m, int qid)
 {
 	// device_printf(sc->dev, "%s\n", __func__);
-	struct ifnet *ifp;
+	if_t ifp;
 	struct rt_softc_tx_ring *ring;
 	struct rt_softc_tx_data *data;
 	struct rt_txdesc *desc;
@@ -1004,7 +1002,7 @@ rt_tx_data(struct rt_softc *sc, struct mbuf *m, int qid)
 		/* Set destination */
 		desc->dst = (TXDSCR_DST_PORT_GDMA1 << 1); /* start at bit one */
 
-		if ((ifp->if_capenable & IFCAP_TXCSUM) != 0)
+		if ((if_getcapenable(ifp) & IFCAP_TXCSUM) != 0)
 			desc->dst |= (TXDSCR_IP_CSUM_GEN |
 			    TXDSCR_UDP_CSUM_GEN | TXDSCR_TCP_CSUM_GEN);
 		/* Set queue id */
@@ -1067,19 +1065,19 @@ rt_tx_data(struct rt_softc *sc, struct mbuf *m, int qid)
  * rt_start - start Transmit/Receive
  */
 static void
-rt_start(struct ifnet *ifp)
+rt_start(if_t ifp)
 {
 	struct rt_softc *sc;
 	struct mbuf *m;
 	int qid = 0 /* XXX must check QoS priority */;
 
-	sc = ifp->if_softc;
+	sc = if_getsoftc(ifp);
 
-	if (!(ifp->if_drv_flags & IFF_DRV_RUNNING))
+	if (!(if_getdrvflags(ifp) & IFF_DRV_RUNNING))
 		return;
 
 	for (;;) {
-		IFQ_DRV_DEQUEUE(&ifp->if_snd, m);
+		m = if_dequeue(ifp);
 		if (m == NULL)
 			break;
 
@@ -1096,7 +1094,7 @@ rt_start(struct ifnet *ifp)
 
 			m_freem(m);
 
-			ifp->if_drv_flags |= IFF_DRV_OACTIVE;
+			if_setdrvflagbits(ifp, IFF_DRV_OACTIVE, 0);
 			if_inc_counter(ifp, IFCOUNTER_OERRORS, 1);
 
 			sc->tx_data_queue_full[qid]++;
@@ -1123,21 +1121,21 @@ rt_start(struct ifnet *ifp)
  * filtering done by attached Ethernet switch.
  */
 static void
-rt_update_promisc(struct ifnet *ifp)
+rt_update_promisc(if_t ifp)
 {
 	struct rt_softc *sc;
 
-	sc = ifp->if_softc;
+	sc = if_getsoftc(ifp);
 	printf("%s: %s promiscuous mode\n",
 		device_get_nameunit(sc->dev),
-		(ifp->if_flags & IFF_PROMISC) ? "entering" : "leaving");
+		(if_getflags(ifp) & IFF_PROMISC) ? "entering" : "leaving");
 }
 
 /*
  * rt_ioctl - ioctl handler.
  */
 static int
-rt_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
+rt_ioctl(if_t ifp, u_long cmd, caddr_t data)
 {
 	struct rt_softc *sc;
 	struct ifreq *ifr;
@@ -1146,7 +1144,7 @@ rt_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 #endif /* IF_RT_PHY_SUPPORT */
 	int error;
 
-	sc = ifp->if_softc;
+	sc = if_getsoftc(ifp);
 	ifr = (struct ifreq *) data;
 
 	error = 0;
@@ -1154,19 +1152,19 @@ rt_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 	switch (cmd) {
 	case SIOCSIFFLAGS:
 		RT_SOFTC_LOCK(sc);
-		if (ifp->if_flags & IFF_UP) {
-			if (ifp->if_drv_flags & IFF_DRV_RUNNING) {
-				if ((ifp->if_flags ^ sc->if_flags) &
+		if (if_getflags(ifp) & IFF_UP) {
+			if (if_getdrvflags(ifp) & IFF_DRV_RUNNING) {
+				if ((if_getflags(ifp) ^ sc->if_flags) &
 				    IFF_PROMISC)
 					rt_update_promisc(ifp);
 			} else {
 				rt_init_locked(sc);
 			}
 		} else {
-			if (ifp->if_drv_flags & IFF_DRV_RUNNING)
+			if (if_getdrvflags(ifp) & IFF_DRV_RUNNING)
 				rt_stop_locked(sc);
 		}
-		sc->if_flags = ifp->if_flags;
+		sc->if_flags = if_getflags(ifp);
 		RT_SOFTC_UNLOCK(sc);
 		break;
 	case SIOCGIFMEDIA:
@@ -1205,7 +1203,7 @@ static void
 rt_tx_watchdog(void *arg)
 {
 	struct rt_softc *sc;
-	struct ifnet *ifp;
+	if_t ifp;
 
 	sc = arg;
 	ifp = sc->ifp;
@@ -1235,7 +1233,7 @@ static void
 rt_rt5350_intr(void *arg)
 {
 	struct rt_softc *sc;
-	struct ifnet *ifp;
+	if_t ifp;
 	uint32_t status;
 
 	sc = arg;
@@ -1253,7 +1251,7 @@ rt_rt5350_intr(void *arg)
 
 	sc->interrupts++;
 
-	if (!(ifp->if_drv_flags & IFF_DRV_RUNNING))
+	if (!(if_getdrvflags(ifp) & IFF_DRV_RUNNING))
 	        return;
 
 	if (status & RT5350_INT_TX_COHERENT)
@@ -1412,7 +1410,7 @@ static void
 rt_rx_done_task(void *context, int pending)
 {
 	struct rt_softc *sc;
-	struct ifnet *ifp;
+	if_t ifp;
 	int again;
 
 	sc = context;
@@ -1420,7 +1418,7 @@ rt_rx_done_task(void *context, int pending)
 
 	RT_DPRINTF(sc, RT_DEBUG_RX, "Rx done task\n");
 
-	if (!(ifp->if_drv_flags & IFF_DRV_RUNNING))
+	if (!(if_getdrvflags(ifp) & IFF_DRV_RUNNING))
 		return;
 
 	sc->intr_pending_mask &= ~sc->int_rx_done_mask;
@@ -1447,7 +1445,7 @@ static void
 rt_tx_done_task(void *context, int pending)
 {
 	struct rt_softc *sc;
-	struct ifnet *ifp;
+	if_t ifp;
 	uint32_t intr_mask;
 	int i;
 
@@ -1456,7 +1454,7 @@ rt_tx_done_task(void *context, int pending)
 
 	RT_DPRINTF(sc, RT_DEBUG_TX, "Tx done task\n");
 
-	if (!(ifp->if_drv_flags & IFF_DRV_RUNNING))
+	if (!(if_getdrvflags(ifp) & IFF_DRV_RUNNING))
 		return;
 
 	for (i = RT_SOFTC_TX_RING_COUNT - 1; i >= 0; i--) {
@@ -1468,7 +1466,7 @@ rt_tx_done_task(void *context, int pending)
 
 	sc->tx_timer = 0;
 
-	ifp->if_drv_flags &= ~IFF_DRV_OACTIVE;
+	if_setdrvflagbits(ifp, 0, IFF_DRV_OACTIVE);
 
 	intr_mask = (
 		RT5350_INT_TXQ3_DONE |
@@ -1489,7 +1487,7 @@ rt_tx_done_task(void *context, int pending)
 
 	RT_SOFTC_UNLOCK(sc);
 
-	if (!IFQ_IS_EMPTY(&ifp->if_snd))
+	if (!(if_sendq_empty(ifp)))
 		rt_start(ifp);
 }
 
@@ -1500,7 +1498,7 @@ static void
 rt_periodic_task(void *context, int pending)
 {
 	struct rt_softc *sc;
-	struct ifnet *ifp;
+	if_t ifp;
 
 	sc = context;
 	ifp = sc->ifp;
@@ -1508,7 +1506,7 @@ rt_periodic_task(void *context, int pending)
 	RT_DPRINTF(sc, RT_DEBUG_PERIODIC, "periodic task: round=%lu\n",
 	    sc->periodic_round);
 
-	if (!(ifp->if_drv_flags & IFF_DRV_RUNNING))
+	if (!(if_getdrvflags(ifp) & IFF_DRV_RUNNING))
 		return;
 
 	RT_SOFTC_LOCK(sc);
@@ -1531,7 +1529,7 @@ rt_periodic_task(void *context, int pending)
 static int
 rt_rx_eof(struct rt_softc *sc, struct rt_softc_rx_ring *ring, int limit)
 {
-	struct ifnet *ifp;
+	if_t ifp;
 /*	struct rt_softc_rx_ring *ring; */
 	struct rt_rxdesc *desc;
 	struct rt_softc_rx_data *data;
@@ -1638,7 +1636,7 @@ rt_rx_eof(struct rt_softc *sc, struct rt_softc_rx_ring *ring, int limit)
 		m->m_pkthdr.len = m->m_len = len;
 
 		/* check for crc errors */
-		if ((ifp->if_capenable & IFCAP_RXCSUM) != 0) {
+		if ((if_getcapenable(ifp) & IFCAP_RXCSUM) != 0) {
 			/*check for valid checksum*/
 			if (desc_flags & (sc->csum_fail_ip|sc->csum_fail_l4)) {
 				RT_DPRINTF(sc, RT_DEBUG_RX,
@@ -1646,7 +1644,7 @@ rt_rx_eof(struct rt_softc *sc, struct rt_softc_rx_ring *ring, int limit)
 
 				if_inc_counter(ifp, IFCOUNTER_IERRORS, 1);
 
-				if (!(ifp->if_flags & IFF_PROMISC)) {
+				if (!(if_getflags(ifp) & IFF_PROMISC)) {
 				    m_freem(m);
 				    goto skip;
 				}
@@ -1659,7 +1657,7 @@ rt_rx_eof(struct rt_softc *sc, struct rt_softc_rx_ring *ring, int limit)
 			m->m_flags &= ~M_HASFCS;
 		}
 
-		(*ifp->if_input)(ifp, m);
+		if_input(ifp, m);
 skip:
 		desc->sdl0 &= ~htole16(RT_RXDESC_SDL0_DDONE);
 
@@ -1693,7 +1691,7 @@ skip:
 static void
 rt_tx_eof(struct rt_softc *sc, struct rt_softc_tx_ring *ring)
 {
-	struct ifnet *ifp;
+	if_t ifp;
 	struct rt_txdesc *desc;
 	struct rt_softc_tx_data *data;
 	uint32_t index;
@@ -1762,7 +1760,7 @@ rt_tx_eof(struct rt_softc *sc, struct rt_softc_tx_ring *ring)
 static void
 rt_update_stats(struct rt_softc *sc)
 {
-	// struct ifnet *ifp;
+	// if_t ifp;
 
 	// ifp = sc->ifp;
 	RT_DPRINTF(sc, RT_DEBUG_STATS, "update statistic: \n");
@@ -1878,7 +1876,7 @@ rt_txrx_enable(struct rt_softc *sc)
 static int
 rt_alloc_rx_ring(struct rt_softc *sc, struct rt_softc_rx_ring *ring, int qid)
 {
-	device_printf(sc->dev, "%s\n", __func__);
+	// device_printf(sc->dev, "%s\n", __func__);
 	struct rt_rxdesc *desc;
 	struct rt_softc_rx_data *data;
 	bus_dma_segment_t segs[1];
@@ -2045,7 +2043,7 @@ rt_free_rx_ring(struct rt_softc *sc, struct rt_softc_rx_ring *ring)
 static int
 rt_alloc_tx_ring(struct rt_softc *sc, struct rt_softc_tx_ring *ring, int qid)
 {
-	device_printf(sc->dev, "%s\n", __func__);
+	// device_printf(sc->dev, "%s\n", __func__);
 	struct rt_softc_tx_data *data;
 	int error, i;
 
