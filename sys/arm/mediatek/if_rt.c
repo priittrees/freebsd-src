@@ -319,11 +319,11 @@ rt_mac_addr(struct rt_softc *sc)
 	eaddr = if_getlladdr(ifp);
 
 	val = eaddr[1] | (eaddr[0] << 8);
-	RT_WRITE(sc, RT_GDM_MAC_MSB(RT_GDMA1), val);
+	RT_WRITE(sc, RT_GDM_MAC_MSB(RT_GDMA1_BASE), val);
 
 	val = eaddr[5] | (eaddr[4] << 8) | (eaddr[3] << 16) |
 	    (eaddr[2] << 24);
-	RT_WRITE(sc, RT_GDM_MAC_LSB(RT_GDMA1), val);
+	RT_WRITE(sc, RT_GDM_MAC_LSB(RT_GDMA1_BASE), val);
 }
 
 /*
@@ -404,30 +404,28 @@ rt_attach(device_t dev)
 	/* RT5350: No GDMA, PSE, CDMA, PPE */
 //	RT_WRITE(sc, GE_PORT_BASE + 0x0C00, // UDPCS, TCPCS, IPCS=1
 //		RT_READ(sc, GE_PORT_BASE + 0x0C00) | (0x7<<16));
-	sc->delay_int_cfg=RT5350_PDMA_BASE+RT5350_DELAY_INT_CFG;
-	sc->fe_int_status=RT5350_FE_INT_STATUS;
-	sc->fe_int_enable=RT5350_FE_INT_ENABLE;
-	sc->pdma_glo_cfg=RT5350_PDMA_BASE+RT5350_PDMA_GLO_CFG;
-	sc->pdma_rst_idx=RT5350_PDMA_BASE+RT5350_PDMA_RST_IDX;
+	sc->delay_int_cfg=RT5350_DELAY_INT_CFG;
+	sc->pdma_int_status=RT5350_PDMA_INT_STATUS;
+	sc->pdma_int_enable=RT5350_PDMA_INT_ENABLE;
+	sc->pdma_glo_cfg=RT5350_PDMA_GLO_CFG;
+	sc->pdma_rst_idx=RT5350_PDMA_RST_IDX;
 	for (i = 0; i < RT_SOFTC_TX_RING_COUNT; i++) {
-	  sc->tx_base_ptr[i]=RT5350_PDMA_BASE+RT5350_TX_BASE_PTR(i);
-	  sc->tx_max_cnt[i]=RT5350_PDMA_BASE+RT5350_TX_MAX_CNT(i);
-	  sc->tx_ctx_idx[i]=RT5350_PDMA_BASE+RT5350_TX_CTX_IDX(i);
-	  sc->tx_dtx_idx[i]=RT5350_PDMA_BASE+RT5350_TX_DTX_IDX(i);
+		sc->tx_base_ptr[i]=RT5350_TX_BASE_PTR(i);
+		sc->tx_max_cnt[i]=RT5350_TX_MAX_CNT(i);
+		sc->tx_ctx_idx[i]=RT5350_TX_CTX_IDX(i);
+		sc->tx_dtx_idx[i]=RT5350_TX_DTX_IDX(i);
 	}
 	sc->rx_ring_count=2;
-	sc->rx_base_ptr[0]=RT5350_PDMA_BASE+RT5350_RX_BASE_PTR0;
-	sc->rx_max_cnt[0]=RT5350_PDMA_BASE+RT5350_RX_MAX_CNT0;
-	sc->rx_calc_idx[0]=RT5350_PDMA_BASE+RT5350_RX_CALC_IDX0;
-	sc->rx_drx_idx[0]=RT5350_PDMA_BASE+RT5350_RX_DRX_IDX0;
-	sc->rx_base_ptr[1]=RT5350_PDMA_BASE+RT5350_RX_BASE_PTR1;
-	sc->rx_max_cnt[1]=RT5350_PDMA_BASE+RT5350_RX_MAX_CNT1;
-	sc->rx_calc_idx[1]=RT5350_PDMA_BASE+RT5350_RX_CALC_IDX1;
-	sc->rx_drx_idx[1]=RT5350_PDMA_BASE+RT5350_RX_DRX_IDX1;
+	for (i = 0; i < sc->rx_ring_count; i++) {
+		sc->rx_base_ptr[i]=RT5350_RX_BASE_PTR(i);
+		sc->rx_max_cnt[i]=RT5350_RX_MAX_CNT(i);
+		sc->rx_calc_idx[i]=RT5350_RX_CALC_IDX(i);
+		sc->rx_drx_idx[i]=RT5350_RX_DRX_IDX(i);
+	}
 	sc->int_rx_done_mask=RT5350_INT_RXQ0_DONE;
 	sc->int_tx_done_mask=RT5350_INT_TXQ0_DONE;
 
-	RT_WRITE(sc, RT_GDM_IG_CTRL(RT_GDMA1),
+	RT_WRITE(sc, RT_GDM_IG_CTRL(RT_GDMA1_BASE),
 	(
 	    GDM_ICS_EN | /* Enable IP Csum */
 	    GDM_TCS_EN | /* Enable TCP Csum */
@@ -730,7 +728,7 @@ rt_init_locked(void *priv)
 	//rt305x_sysctl_set(SYSCTL_RSTCTRL, SYSCTL_RSTCTRL_FRENG);
 
 	/* Fwd to CPU (uni|broad|multi)cast and Unknown */
-	RT_WRITE(sc, RT_GDM_IG_CTRL(RT_GDMA1),
+	RT_WRITE(sc, RT_GDM_IG_CTRL(RT_GDMA1_BASE),
 	(
 	    GDM_ICS_EN | /* Enable IP Csum */
 	    GDM_TCS_EN | /* Enable TCP Csum */
@@ -804,7 +802,7 @@ rt_init_locked(void *priv)
 	RT_WRITE(sc, sc->delay_int_cfg, 0);
 
 	/* clear pending interrupts */
-	RT_WRITE(sc, sc->fe_int_status, 0xffffffff);
+	RT_WRITE(sc, sc->pdma_int_status, 0xffffffff);
 
 	/* enable interrupts */
 	tmp = RT5350_INT_TX_COHERENT |
@@ -818,7 +816,7 @@ rt_init_locked(void *priv)
 
 	sc->intr_enable_mask = tmp;
 
-	RT_WRITE(sc, sc->fe_int_enable, tmp);
+	RT_WRITE(sc, sc->pdma_int_enable, tmp);
 
 	if (rt_txrx_enable(sc) != 0)
 		goto fail;
@@ -888,12 +886,12 @@ rt_stop_locked(void *priv)
 	RT_SOFTC_LOCK(sc);
 
 	/* disable interrupts */
-	RT_WRITE(sc, sc->fe_int_enable, 0);
+	RT_WRITE(sc, sc->pdma_int_enable, 0);
 
 	/* reset adapter */
 	//#  RT_WRITE(sc, GE_PORT_BASE + FE_RST_GLO, PSE_RESET);
 
-	RT_WRITE(sc, RT_GDM_IG_CTRL(RT_GDMA1),
+	RT_WRITE(sc, RT_GDM_IG_CTRL(RT_GDMA1_BASE),
 	(
 	    GDM_ICS_EN | /* Enable IP Csum */
 	    GDM_TCS_EN | /* Enable TCP Csum */
@@ -1230,8 +1228,8 @@ rt_rt5350_intr(void *arg)
 	ifp = sc->ifp;
 
 	/* acknowledge interrupts */
-	status = RT_READ(sc, sc->fe_int_status);
-	RT_WRITE(sc, sc->fe_int_status, status);
+	status = RT_READ(sc, sc->pdma_int_status);
+	RT_WRITE(sc, sc->pdma_int_status, status);
 
 	RT_DPRINTF(sc, RT_DEBUG_INTR, "interrupt: status=0x%08x\n", status);
 
@@ -1777,32 +1775,18 @@ static void
 rt_update_raw_counters(struct rt_softc *sc)
 {
 
-	// device_printf(sc->dev, "%s\n", __func__);
-	// sc->tx_bytes	+= RT_READ(sc, CNTR_BASE + GDMA_TX_GBCNT0);
-	// sc->tx_packets	+= RT_READ(sc, CNTR_BASE + GDMA_TX_GPCNT0);
-	// sc->tx_skip	+= RT_READ(sc, CNTR_BASE + GDMA_TX_SKIPCNT0);
-	// sc->tx_collision+= RT_READ(sc, CNTR_BASE + GDMA_TX_COLCNT0);
+	sc->tx_bytes	+= RT_READ(sc, GDMA_TX_GBCNT0);
+	sc->tx_packets	+= RT_READ(sc, GDMA_TX_GPCNT0);
+	sc->tx_skip	+= RT_READ(sc, GDMA_TX_SKIPCNT0);
+	sc->tx_collision+= RT_READ(sc, GDMA_TX_COLCNT0);
 
-	// sc->rx_bytes	+= RT_READ(sc, CNTR_BASE + GDMA_RX_GBCNT0);
-	// sc->rx_packets	+= RT_READ(sc, CNTR_BASE + GDMA_RX_GPCNT0);
-	// sc->rx_crc_err	+= RT_READ(sc, CNTR_BASE + GDMA_RX_CSUM_ERCNT0);
-	// sc->rx_short_err+= RT_READ(sc, CNTR_BASE + GDMA_RX_SHORT_ERCNT0);
-	// sc->rx_long_err	+= RT_READ(sc, CNTR_BASE + GDMA_RX_LONG_ERCNT0);
-	// sc->rx_phy_err	+= RT_READ(sc, CNTR_BASE + GDMA_RX_FERCNT0);
-	// sc->rx_fifo_overflows+= RT_READ(sc, CNTR_BASE + GDMA_RX_OERCNT0);
-
-	sc->tx_bytes	+= RT_READ(sc, CNTR_BASE + 0x30);
-	sc->tx_packets	+= RT_READ(sc, CNTR_BASE + 0x38);
-	sc->tx_skip	+= RT_READ(sc, CNTR_BASE + 0x28);
-	sc->tx_collision+= RT_READ(sc, CNTR_BASE + 0x2c);
-
-	sc->rx_bytes	+= RT_READ(sc, CNTR_BASE + 0x00);
-	sc->rx_packets	+= RT_READ(sc, CNTR_BASE + 0x08);
-	sc->rx_crc_err	+= RT_READ(sc, CNTR_BASE + 0x1c);
-	sc->rx_short_err+= RT_READ(sc, CNTR_BASE + 0x18);
-	sc->rx_long_err	+= RT_READ(sc, CNTR_BASE + 0x1c);
-	sc->rx_phy_err	+= RT_READ(sc, CNTR_BASE + 0x14);
-	sc->rx_fifo_overflows+= RT_READ(sc, CNTR_BASE + 0x10);
+	sc->rx_bytes	+= RT_READ(sc, GDMA_RX_GBCNT0);
+	sc->rx_packets	+= RT_READ(sc, GDMA_RX_GPCNT0);
+	sc->rx_crc_err	+= RT_READ(sc, GDMA_RX_CSUM_ERCNT0);
+	sc->rx_short_err+= RT_READ(sc, GDMA_RX_SHORT_ERCNT0);
+	sc->rx_long_err	+= RT_READ(sc, GDMA_RX_LONG_ERCNT0);
+	sc->rx_phy_err	+= RT_READ(sc, GDMA_RX_FERCNT0);
+	sc->rx_fifo_overflows+= RT_READ(sc, GDMA_RX_OERCNT0);
 }
 
 static void
@@ -1812,7 +1796,7 @@ rt_intr_enable(struct rt_softc *sc, uint32_t intr_mask)
 
 	sc->intr_disable_mask &= ~intr_mask;
 	tmp = sc->intr_enable_mask & ~sc->intr_disable_mask;
-	RT_WRITE(sc, sc->fe_int_enable, tmp);
+	RT_WRITE(sc, sc->pdma_int_enable, tmp);
 }
 
 static void
@@ -1822,7 +1806,7 @@ rt_intr_disable(struct rt_softc *sc, uint32_t intr_mask)
 
 	sc->intr_disable_mask |= intr_mask;
 	tmp = sc->intr_enable_mask & ~sc->intr_disable_mask;
-	RT_WRITE(sc, sc->fe_int_enable, tmp);
+	RT_WRITE(sc, sc->pdma_int_enable, tmp);
 }
 
 /*
