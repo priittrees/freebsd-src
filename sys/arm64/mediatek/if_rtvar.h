@@ -281,8 +281,8 @@ struct rt_softc
         uint32_t	int_rx_done_mask;
         uint32_t	int_tx_done_mask;
         uint32_t        delay_int_cfg;
-        uint32_t        fe_int_status;
-        uint32_t        fe_int_enable;
+        uint32_t        pdma_int_status;
+        uint32_t        pdma_int_enable;
         uint32_t        pdma_glo_cfg;
         uint32_t        pdma_rst_idx;
         uint32_t        tx_base_ptr[RT_SOFTC_TX_RING_COUNT];
