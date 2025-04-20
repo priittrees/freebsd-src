@@ -58,20 +58,21 @@
 #define	    MDIO_PHY_DATA_MASK	0x0000ffff
 #define	    MDIO_PHY_DATA_SHIFT	0 
 
-#define	FE_GLO_CFG	0x08 /*Frame Engine Global Configuration */
+#define	FE_GLO_CFG	0x00 /*Frame Engine Global Configuration */
 #define	    EXT_VLAN_TYPE_MASK	0xffff0000
 #define	    EXT_VLAN_TYPE_SHIFT	16
 #define	    EXT_VLAN_TYPE_DFLT	0x81000000
-#define	    US_CYC_CNT_MASK	0x0000ff00
-#define	    US_CYC_CNT_SHIFT	8
-#define	    US_CYC_CNT_DFLT	(132<<8) /* sys clocks per 1uS */
+// #define	    US_CYC_CNT_MASK	0x0000ff00
+// #define	    US_CYC_CNT_SHIFT	8
+// #define	    US_CYC_CNT_DFLT	(132<<8) /* sys clocks per 1uS */
 #define	    L2_SPACE		(8<<4) /* L2 space. Unit is 8 bytes */
 
-#define	FE_RST_GLO	0x0C /*Frame Engine Global Reset*/
-#define	    FC_DROP_CNT_MASK	0xffff0000 /*Flow cntrl drop count */
-#define	    FC_DROP_CNT_SHIFT	16
+#define	FE_RST_GLO	0x04 /*Frame Engine Global Reset*/
+// #define	    FC_DROP_CNT_MASK	0xffff0000 /*Flow cntrl drop count */
+// #define	    FC_DROP_CNT_SHIFT	16
 #define	    PSE_RESET		(1<<0)
 
+// pane uus nimi FE_INT_STATUS ja B10000C FE_INT_ENABLE on 0x08 ja 0x0c
 /* RT5350 interrupt registers */
 #define RT5350_FE_INT_STATUS    (RT5350_PDMA_BASE + 0x220)
 #define            RT5350_INT_RX_COHERENT      (1<<31)
@@ -86,28 +87,26 @@
 #define            RT5350_INT_TXQ0_DONE        (1<<0)
 #define RT5350_FE_INT_ENABLE    (RT5350_PDMA_BASE + 0x228)
 
-#define	MDIO_CFG2	0x18
-#define	FOE_TS_T	0x1c
-#define	    PSE_FQ_PCNT_MASK	0xff000000
-#define	    PSE_FQ_PCNT_SHIFT	24
+// FE_FOE_TS_T
+#define	FOE_TS_T	0x10
+// #define	    PSE_FQ_PCNT_MASK	0xff000000
+// #define	    PSE_FQ_PCNT_SHIFT	24
 #define	    FOE_TS_TIMESTAMP_MASK 0x0000ffff
 #define	    FOE_TS_TIMESTAMP_SHIFT 0
 
-//#define	GDMA1_BASE		0x0020
-//#define	GDMA2_BASE		0x0060
 //#define	CDMA_BASE		0x0080
-//#define	MT7620_GDMA1_BASE	0x600
-#define	MT7622_GDMA1_BASE	0x500
-#define	MT7622_GDMA2_BASE	0x1500
+//#define	CDM_BASE1		
+//#define	CDM_BASE2		
+#define	RT_GDMA1		0x500
+#define RT_GDMA2		RT_GDMA1 + 0x1000
 
-#define	GDMA_FWD_CFG	0x00	/* Only GDMA */
-//#define	    GDM_DROP_256B	(1<<23)
+#define RT_GDM_IG_CTRL(gdma)	(gdma + 0x00)
+#define	    INSV_EN		(1<<25)
+#define	    STAG_EN		(1<<24)
 #define	    GDM_ICS_EN		(1<<22)
 #define	    GDM_TCS_EN		(1<<21)
 #define	    GDM_UCS_EN		(1<<20)
 #define	    GDM_DROP_256B	(1<<19)
-//#define	    GDM_DISPAD		(1<<18)
-//#define	    GDM_DISCRC		(1<<17)
 #define	    GDM_STRPCRC		(1<<16)
 #define	    GDM_UFRC_P_SHIFT	12
 #define	    GDM_BFRC_P_SHIFT	8
@@ -121,8 +120,11 @@
 #define     GDM_DST_PORT_QDMA	5
 #define	    GDM_DST_PORT_DISCARD 7
 
-#define	PSE_BASE	    0x0040
-//#define	PSE_FQFC_CFG        0x00
+#define RT_GDM_MAC_LSB(gdma)  (gdma + 0x08)
+#define RT_GDM_MAC_MSB(gdma)  (gdma + 0x0c)
+
+#define	PSE_BASE	    0x0100
+#define	PSE_FQFC_CFG        0x00
 //#define	    FQ_MAX_PCNT_MASK	0xff000000
 //#define	    FQ_MAX_PCNT_SHIFT	24
 //#define	    FQ_FC_RLS_MASK	0x00ff0000
@@ -145,7 +147,7 @@
 //#define	    P_IQ_ASRT_MASK	0x000000ff
 //#define	    P_IQ_ASRT_SHIFT	0
 
-#define	CDMA_OQ_STA         0x10
+//#define	CDMA_OQ_STA         0x10
 //#define	GDMA1_OQ_STA        0x14
 //#define	GDMA2_OQ_STA        0x18
 //#define	    P_OQ3_PCNT_MASK	0xff000000
