@@ -311,10 +311,6 @@ static void
 rt_mac_addr(struct rt_softc *sc)
 {
 
-#define GDM_MAC_LSB(x)	(0x08 + (x))
-#define GDM_MAC_MSB(x)	(0x0c + (x))
-//#define GDM_MAC_LSB sc->gdma1_base + 0x08
-//#define GDM_MAC_MSB sc->gdma1_base + 0x0c
 	if_t ifp = sc->ifp;
 	const uint8_t *eaddr;
 	uint32_t val;
@@ -323,11 +319,11 @@ rt_mac_addr(struct rt_softc *sc)
 	eaddr = if_getlladdr(ifp);
 
 	val = eaddr[1] | (eaddr[0] << 8);
-	RT_WRITE(sc, GDM_MAC_MSB(sc->gdma1_base), val);
+	RT_WRITE(sc, RT_GDM_MAC_MSB(RT_GDMA1), val);
 
 	val = eaddr[5] | (eaddr[4] << 8) | (eaddr[3] << 16) |
 	    (eaddr[2] << 24);
-	RT_WRITE(sc, GDM_MAC_LSB(sc->gdma1_base), val);
+	RT_WRITE(sc, RT_GDM_MAC_LSB(RT_GDMA1), val);
 }
 
 /*
@@ -402,8 +398,6 @@ rt_attach(device_t dev)
 	sc->csum_fail_ip = MT7621_RXD_SRC_IP_CSUM_FAIL;
 	sc->csum_fail_l4 = MT7621_RXD_SRC_L4_CSUM_FAIL;
 
-	/* Fill in soc-specific registers map */
-	sc->gdma1_base = MT7622_GDMA1_BASE;
 	/* fallthrough */
 	device_printf(dev, "MT7622 Ethernet MAC (rev 0x%08x)\n", sc->mac_rev);
 
@@ -433,18 +427,17 @@ rt_attach(device_t dev)
 	sc->int_rx_done_mask=RT5350_INT_RXQ0_DONE;
 	sc->int_tx_done_mask=RT5350_INT_TXQ0_DONE;
 
-	if (sc->gdma1_base != 0)
-		RT_WRITE(sc, sc->gdma1_base + GDMA_FWD_CFG,
-		(
-		GDM_ICS_EN | /* Enable IP Csum */
-		GDM_TCS_EN | /* Enable TCP Csum */
-		GDM_UCS_EN | /* Enable UDP Csum */
-		GDM_STRPCRC | /* Strip CRC from packet */
-		GDM_DST_PORT_CPU << GDM_UFRC_P_SHIFT | /* fwd UCast to CPU*/
-		GDM_DST_PORT_CPU << GDM_BFRC_P_SHIFT | /* fwd BCast to CPU*/
-		GDM_DST_PORT_CPU << GDM_MFRC_P_SHIFT | /* fwd MCast to CPU */
-		GDM_DST_PORT_CPU << GDM_OFRC_P_SHIFT   /* fwd Other to CPU */
-		));
+	RT_WRITE(sc, RT_GDM_IG_CTRL(RT_GDMA1),
+	(
+	    GDM_ICS_EN | /* Enable IP Csum */
+	    GDM_TCS_EN | /* Enable TCP Csum */
+	    GDM_UCS_EN | /* Enable UDP Csum */
+	    GDM_STRPCRC | /* Strip CRC from packet */
+	    GDM_DST_PORT_CPU << GDM_UFRC_P_SHIFT | /* fwd UCast to CPU*/
+	    GDM_DST_PORT_CPU << GDM_BFRC_P_SHIFT | /* fwd BCast to CPU*/
+	    GDM_DST_PORT_CPU << GDM_MFRC_P_SHIFT | /* fwd MCast to CPU */
+	    GDM_DST_PORT_CPU << GDM_OFRC_P_SHIFT   /* fwd Other to CPU */
+	));
 
 	rt_mac_change(sc, IFM_ETHER | IFM_1000_T | IFM_FDX);
 
@@ -737,19 +730,17 @@ rt_init_locked(void *priv)
 	//rt305x_sysctl_set(SYSCTL_RSTCTRL, SYSCTL_RSTCTRL_FRENG);
 
 	/* Fwd to CPU (uni|broad|multi)cast and Unknown */
-	if (sc->gdma1_base != 0)
-
-		RT_WRITE(sc, sc->gdma1_base + GDMA_FWD_CFG,
-		(
-		GDM_ICS_EN | /* Enable IP Csum */
-		GDM_TCS_EN | /* Enable TCP Csum */
-		GDM_UCS_EN | /* Enable UDP Csum */
-		GDM_STRPCRC | /* Strip CRC from packet */
-		GDM_DST_PORT_CPU << GDM_UFRC_P_SHIFT | /* fwd UCast to CPU */
-		GDM_DST_PORT_CPU << GDM_BFRC_P_SHIFT | /* fwd BCast to CPU */
-		GDM_DST_PORT_CPU << GDM_MFRC_P_SHIFT | /* fwd MCast to CPU */
-		GDM_DST_PORT_CPU << GDM_OFRC_P_SHIFT   /* fwd Other to CPU */
-		));
+	RT_WRITE(sc, RT_GDM_IG_CTRL(RT_GDMA1),
+	(
+	    GDM_ICS_EN | /* Enable IP Csum */
+	    GDM_TCS_EN | /* Enable TCP Csum */
+	    GDM_UCS_EN | /* Enable UDP Csum */
+	    GDM_STRPCRC | /* Strip CRC from packet */
+	    GDM_DST_PORT_CPU << GDM_UFRC_P_SHIFT | /* fwd UCast to CPU */
+	    GDM_DST_PORT_CPU << GDM_BFRC_P_SHIFT | /* fwd BCast to CPU */
+	    GDM_DST_PORT_CPU << GDM_MFRC_P_SHIFT | /* fwd MCast to CPU */
+	    GDM_DST_PORT_CPU << GDM_OFRC_P_SHIFT   /* fwd Other to CPU */
+	));
 
 	/* disable DMA engine */
 	RT_WRITE(sc, sc->pdma_glo_cfg, 0);
@@ -902,18 +893,17 @@ rt_stop_locked(void *priv)
 	/* reset adapter */
 	//#  RT_WRITE(sc, GE_PORT_BASE + FE_RST_GLO, PSE_RESET);
 
-	if (sc->gdma1_base != 0)
-		RT_WRITE(sc, sc->gdma1_base + GDMA_FWD_CFG,
-		(
-		GDM_ICS_EN | /* Enable IP Csum */
-		GDM_TCS_EN | /* Enable TCP Csum */
-		GDM_UCS_EN | /* Enable UDP Csum */
-		GDM_STRPCRC | /* Strip CRC from packet */
-		GDM_DST_PORT_CPU << GDM_UFRC_P_SHIFT | /* fwd UCast to CPU */
-		GDM_DST_PORT_CPU << GDM_BFRC_P_SHIFT | /* fwd BCast to CPU */
-		GDM_DST_PORT_CPU << GDM_MFRC_P_SHIFT | /* fwd MCast to CPU */
-		GDM_DST_PORT_CPU << GDM_OFRC_P_SHIFT   /* fwd Other to CPU */
-		));
+	RT_WRITE(sc, RT_GDM_IG_CTRL(RT_GDMA1),
+	(
+	    GDM_ICS_EN | /* Enable IP Csum */
+	    GDM_TCS_EN | /* Enable TCP Csum */
+	    GDM_UCS_EN | /* Enable UDP Csum */
+	    GDM_STRPCRC | /* Strip CRC from packet */
+	    GDM_DST_PORT_CPU << GDM_UFRC_P_SHIFT | /* fwd UCast to CPU */
+	    GDM_DST_PORT_CPU << GDM_BFRC_P_SHIFT | /* fwd BCast to CPU */
+	    GDM_DST_PORT_CPU << GDM_MFRC_P_SHIFT | /* fwd MCast to CPU */
+	    GDM_DST_PORT_CPU << GDM_OFRC_P_SHIFT   /* fwd Other to CPU */
+	));
 }
 
 /*
