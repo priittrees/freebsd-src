@@ -179,42 +179,45 @@ rt_probe(device_t dev)
 
 
 static void
-rt_mac_change(struct rt_softc *sc, uint32_t media)
+rt_mac_change(struct rt_softc *sc, uint32_t media, int gmac)
 {
-#define GMAC_PORT_MCR(p)		(0x0100 + (p) * 0x100)
-#define MAC_RX_PKT_LEN_S		24
-#define MAC_RX_PKT_LEN_M		0x3000000
-#define IPG_CFG_S			18
-#define IPG_CFG_M			0xc0000
-#define MAC_MODE			(1 << 16)
-#define FORCE_MODE			(1 << 15)
-#define MAC_TX_EN			(1 << 14)
-#define MAC_RX_EN			(1 << 13)
-#define DEL_RXFIFO_CLR			(1 << 12)
-#define BKOFF_EN			(1 << 9)
-#define BACKPR_EN			(1 << 8)
-#define FORCE_RX_FC			(1 << 5)
-#define FORCE_TX_FC			(1 << 4)
-#define FORCE_SPD_S			2
-#define FORCE_SPD_M			0x0c
-#define FORCE_DPX			(1 << 1)
-#define FORCE_LINK			(1 << 0)
 
-/* Values of IPG_CFG */
-#define IPG_96BIT			0
-#define IPG_96BIT_WITH_SHORT_IPG	1
-#define IPG_64BIT			2
+	uint32_t reg; 
+	reg = (IPG_CFG_96BIT_WS_IFG << IPG_CFG_SHIFT) |
+		      (MAC_RX_PKT_LEN_1536 << MAC_RX_PKT_LEN_SHIFT) |
+		      MAC_MODE | FORCE_MODE |
+		      MAC_TX_EN | MAC_RX_EN |
+		      BKOFF_EN | BACKPR_EN |
+		      FORCE_LINK;
 
-/* MAC_RX_PKT_LEN: Max RX packet length */
-#define MAC_RX_PKT_LEN_1518		0
-#define MAC_RX_PKT_LEN_1536		1
-#define MAC_RX_PKT_LEN_1552		2
-#define MAC_RX_PKT_LEN_JUMBO		3
+	switch (IFM_SUBTYPE(media)) {
+	case IFM_10_T:
+		reg |= (FORCE_SPD_10M << FORCE_SPD_SHIFT);
+		break;
+	case IFM_100_TX:
+		reg |= (FORCE_SPD_100M << FORCE_SPD_SHIFT);
+		break;
+	case IFM_1000_T:
+        case IFM_1000_SX:
+	case IFM_2500_T:
+	case IFM_2500_SX:
+		reg |= (FORCE_SPD_1000M << FORCE_SPD_SHIFT);
+		break;
+	default:
+		// sc->link_up = false;
+		return;
+	}
 
-/* FORCE_SPD: Forced link speed */
-#define SPEED_10M			0
-#define SPEED_100M			1
-#define SPEED_1000M			2
+	if ((IFM_OPTIONS(media) & IFM_FDX))
+		reg |= FORCE_DPX;
+	else 
+		reg &= ~FORCE_DPX;
+
+	RT_WRITE(sc, MAC_P_MCR(gmac), reg);
+
+	device_printf(sc->dev, "%s MAC_%iMCR  0x%x\n", __func__,
+	    gmac, RT_READ(sc, MAC_P_MCR(gmac)));
+}
 
 // #define GMAC_TRGMII_RCK_CTRL		0x300
 // #define RX_RST				(1 << 31)
@@ -227,43 +230,6 @@ rt_mac_change(struct rt_softc *sc, uint32_t media)
 // #define TD_DM_DRVN_M			0xf0
 // #define TD_DM_DRVP_S			0
 // #define TD_DM_DRVP_M			0x0f
-
-	uint32_t reg; 
-	reg = (IPG_96BIT_WITH_SHORT_IPG << IPG_CFG_S) |
-		      (MAC_RX_PKT_LEN_1536 << MAC_RX_PKT_LEN_S) |
-		      MAC_MODE | FORCE_MODE |
-		      MAC_TX_EN | MAC_RX_EN |
-		      BKOFF_EN | BACKPR_EN |
-		      FORCE_LINK;
-
-	switch (IFM_SUBTYPE(media)) {
-	case IFM_10_T:
-		reg |= (SPEED_10M << FORCE_SPD_S);
-		break;
-	case IFM_100_TX:
-		reg |= (SPEED_100M << FORCE_SPD_S);
-		break;
-	case IFM_1000_T:
-        case IFM_1000_SX:
-	case IFM_2500_T:
-	case IFM_2500_SX:
-		reg |= (SPEED_1000M << FORCE_SPD_S);
-		break;
-	default:
-		// sc->link_up = false;
-		return;
-	}
-
-	if ((IFM_OPTIONS(media) & IFM_FDX))
-		reg |= FORCE_DPX;
-	else 
-		reg &= ~FORCE_DPX;
-
-	RT_WRITE(sc, GE_PORT_BASE + 0x0100, reg);
-
-	device_printf(sc->dev, "%s MTK_MAC_MCR 0  0x%x\n", __func__,
-	    RT_READ(sc, GE_PORT_BASE + 0x0100));
-
 //	for (int i = 0 ; i < 5; i++)
 //		RT_WRITE(sc, GE_PORT_BASE + GMAC_TRGMII_TD_ODT(i),
 //			(8 << TD_DM_DRVP_S) |
@@ -281,7 +247,6 @@ rt_mac_change(struct rt_softc *sc, uint32_t media)
 //		device_printf(sc->dev, "GMAC_TRGMII_TD_ODT 0x%x\n",
 //		    RT_READ(sc, GE_PORT_BASE + GMAC_TRGMII_TD_ODT(i)));
 //
-}
 
 /*
  * ether_request_mac - try to find usable MAC address.
@@ -342,6 +307,7 @@ rt_attach(device_t dev)
 	struct rt_softc *sc;
 	if_t ifp;
 	int error, i;
+	int gmac = 1;
 
 #if 0
 #ifdef FDT
@@ -437,7 +403,7 @@ rt_attach(device_t dev)
 	    GDM_DST_PORT_CPU << GDM_OFRC_P_SHIFT   /* fwd Other to CPU */
 	));
 
-	rt_mac_change(sc, IFM_ETHER | IFM_1000_T | IFM_FDX);
+	rt_mac_change(sc, IFM_ETHER | IFM_1000_T | IFM_FDX, gmac);
 
 	/* allocate Tx and Rx rings */
 	for (i = 0; i < RT_SOFTC_TX_RING_COUNT; i++) {
