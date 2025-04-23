@@ -40,7 +40,7 @@
 
 #define	RT_GDMA1_BASE		0x500
 #define RT_GDMA2_BASE		RT_GDMA1_BASE + 0x1000
-#define RT_GDM_BASE(gmac)	((gmac)?RT_GDMA2_BASE:RT_GDMA1_BASE)
+#define RT_GDM_BASE(gmac)	((gmac == 0) ? RT_GDMA1_BASE : RT_GDMA2_BASE)
 
 #define	RT_GDM_IG_CTRL(gmac)	(RT_GDM_BASE(gmac) + 0x00)
 #define	    INSV_EN		(1<<25)
@@ -128,7 +128,7 @@
 #define RT5350_PDMA_SCH_CFG0	(RT5350_PDMA_BASE + 0x280)
 
 #define	CNTR_BASE 0x2400
-#define CNTR_GDM(gmac)			(CNTR_BASE + (gmac)?40:0)
+#define CNTR_GDM(gmac)		(CNTR_BASE + (((gmac) == 0 ) ? 0x00 : 0x40))
 #define	    GDM_RX_GBCNT_LSB(gmac)	(CNTR_GDM(gmac) + 0x00)
 #define	    GDM_RX_GBCNT_MSB(gmac)	(CNTR_GDM(gmac) + 0x04)
 #define	    GDM_RX_GPCNT(gmac)		(CNTR_GDM(gmac) + 0x08)
