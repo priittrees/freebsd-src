@@ -1761,7 +1761,6 @@ static void
 rt_update_raw_counters(struct rt_softc *sc)
 {
 	int gmac = 0;
-
 	uint32_t tmp;
 
 	sc->tx_bytes	+= RT_READ(sc, GDM_TX_GBCNT_LSB(gmac));
@@ -1772,7 +1771,7 @@ rt_update_raw_counters(struct rt_softc *sc)
 	sc->tx_skip	+= RT_READ(sc, GDM_TX_SKIPCNT(gmac));
 	sc->tx_collision+= RT_READ(sc, GDM_TX_COLCNT(gmac));
 
-	sc->rx_bytes	+=  GDM_RX_GBCNT_LSB(gmac);
+	sc->rx_bytes	+= RT_READ(sc, GDM_RX_GBCNT_LSB(gmac));
 	tmp = RT_READ(sc,GDM_RX_GBCNT_MSB(gmac));
 	if (tmp)
 		sc->rx_bytes    += ((uint64_t)tmp << 32);
