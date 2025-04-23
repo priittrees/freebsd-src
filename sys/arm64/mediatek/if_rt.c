@@ -380,7 +380,7 @@ rt_attach(device_t dev)
 	/* RT5350: No GDMA, PSE, CDMA, PPE */
 //	RT_WRITE(sc, GE_PORT_BASE + 0x0C00, // UDPCS, TCPCS, IPCS=1
 //		RT_READ(sc, GE_PORT_BASE + 0x0C00) | (0x7<<16));
-	sc->delay_int_cfg=RT5350_DELAY_INT_CFG;
+	sc->pdma_delay_int_cfg=RT5350_DELAY_INT_CFG;
 	sc->pdma_int_status=RT5350_PDMA_INT_STATUS;
 	sc->pdma_int_enable=RT5350_PDMA_INT_ENABLE;
 	sc->pdma_glo_cfg=RT5350_PDMA_GLO_CFG;
@@ -453,8 +453,7 @@ rt_attach(device_t dev)
 	if_setinitfn(ifp, rt_init);
 	if_setioctlfn(ifp, rt_ioctl);
 	if_setstartfn(ifp, rt_start);
-#define	RT_TX_QLEN	256
-	if_setsendqlen(ifp, RT_TX_QLEN);
+	if_setsendqlen(ifp, ifqmaxlen);
 	if_setsendqready(ifp);
 
 #ifdef IF_RT_PHY_SUPPORT
@@ -621,9 +620,9 @@ rt_ifmedia_sts(if_t ifp, struct ifmediareq *ifmr)
 	ifmr->ifm_status = IFM_AVALID | IFM_ACTIVE;
 	RT_SOFTC_UNLOCK(sc);
 #else /* !IF_RT_PHY_SUPPORT */
-
+	/* TODO Uuri MAC_MSR */
 	ifmr->ifm_status = IFM_AVALID | IFM_ACTIVE;
-	ifmr->ifm_active = IFM_ETHER | IFM_100_TX | IFM_FDX;
+	ifmr->ifm_active = IFM_ETHER | IFM_1000_TX | IFM_FDX;
 #endif /* IF_RT_PHY_SUPPORT */
 }
 
@@ -778,11 +777,11 @@ rt_init_locked(void *priv)
 
 	/* write back DDONE, 16byte burst enable RX/TX DMA */
 	tmp = FE_TX_WB_DDONE | FE_DMA_BT_SIZE16 | FE_RX_DMA_EN | FE_TX_DMA_EN;
-	tmp |= (1<<31);
+	tmp |= FE_RX_2B_OFFSET;
 	RT_WRITE(sc, sc->pdma_glo_cfg, tmp);
 
 	/* disable interrupts mitigation */
-	RT_WRITE(sc, sc->delay_int_cfg, 0);
+	RT_WRITE(sc, sc->pdma_delay_int_cfg, 0);
 
 	/* clear pending interrupts */
 	RT_WRITE(sc, sc->pdma_int_status, 0xffffffff);
