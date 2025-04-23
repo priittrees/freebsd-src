@@ -111,34 +111,34 @@
 #define	    RXMAX_PTIME_SHIFT	0
 
 #define RT5350_PDMA_INT_STATUS    (RT5350_PDMA_BASE + 0x220)
-#define            RT5350_INT_RX_COHERENT      (1<<31)
-#define            RT5350_RX_DLY_INT           (1<<30)
-#define            RT5350_INT_TX_COHERENT      (1<<29)
-#define            RT5350_TX_DLY_INT           (1<<28)
-#define            RT5350_INT_RXQ3_DONE	       (1<<19)
-#define            RT5350_INT_RXQ2_DONE        (1<<18)
-#define            RT5350_INT_RXQ1_DONE	       (1<<17)
-#define            RT5350_INT_RXQ0_DONE        (1<<16)
-#define            RT5350_INT_TXQ3_DONE        (1<<3)
-#define            RT5350_INT_TXQ2_DONE        (1<<2)
-#define            RT5350_INT_TXQ1_DONE        (1<<1)
-#define            RT5350_INT_TXQ0_DONE        (1<<0)
+#define	    RT5350_INT_RX_COHERENT      (1<<31)
+#define	    RT5350_RX_DLY_INT           (1<<30)
+#define	    RT5350_INT_TX_COHERENT      (1<<29)
+#define	    RT5350_TX_DLY_INT           (1<<28)
+#define	    RT5350_INT_RXQ3_DONE	       (1<<19)
+#define	    RT5350_INT_RXQ2_DONE        (1<<18)
+#define	    RT5350_INT_RXQ1_DONE	       (1<<17)
+#define	    RT5350_INT_RXQ0_DONE        (1<<16)
+#define	    RT5350_INT_TXQ3_DONE        (1<<3)
+#define	    RT5350_INT_TXQ2_DONE        (1<<2)
+#define	    RT5350_INT_TXQ1_DONE        (1<<1)
+#define	    RT5350_INT_TXQ0_DONE        (1<<0)
 #define RT5350_PDMA_INT_ENABLE	(RT5350_PDMA_BASE + 0x228)
 #define RT5350_PDMA_SCH_CFG0	(RT5350_PDMA_BASE + 0x280)
 
 #define	CNTR_BASE 0x2400
-#define	GDMA_RX_GBCNT0		CNTR_BASE + 0x00
-#define	GDMA_RX_GPCNT0		CNTR_BASE + 0x08
-#define	GDMA_RX_OERCNT0		CNTR_BASE + 0x10
-#define	GDMA_RX_FERCNT0		CNTR_BASE + 0x14
-#define	GDMA_RX_SHORT_ERCNT0	CNTR_BASE + 0x18
-#define	GDMA_RX_LONG_ERCNT0	CNTR_BASE + 0x1C
-#define	GDMA_RX_CSUM_ERCNT0	CNTR_BASE + 0x20
-#define GDMA_RX_FCCNT		CNTR_BASE + 0x24
-#define	GDMA_TX_SKIPCNT0	CNTR_BASE + 0x28
-#define	GDMA_TX_COLCNT0		CNTR_BASE + 0x2C
-#define	GDMA_TX_GBCNT0		CNTR_BASE + 0x30
-#define	GDMA_TX_GPCNT0		CNTR_BASE + 0x38
+#define	    GDMA_RX_GBCNT0		CNTR_BASE + 0x00
+#define	    GDMA_RX_GPCNT0		CNTR_BASE + 0x08
+#define	    GDMA_RX_OERCNT0		CNTR_BASE + 0x10
+#define	    GDMA_RX_FERCNT0		CNTR_BASE + 0x14
+#define	    GDMA_RX_SHORT_ERCNT0 	CNTR_BASE + 0x18
+#define	    GDMA_RX_LONG_ERCNT0		CNTR_BASE + 0x1C
+#define	    GDMA_RX_CSUM_ERCNT0		CNTR_BASE + 0x20
+#define     GDMA_RX_FCCNT		CNTR_BASE + 0x24
+#define	    GDMA_TX_SKIPCNT0		CNTR_BASE + 0x28
+#define	    GDMA_TX_COLCNT0		CNTR_BASE + 0x2C
+#define	    GDMA_TX_GBCNT0		CNTR_BASE + 0x30
+#define	    GDMA_TX_GPCNT0		CNTR_BASE + 0x38
 
 #define	GE_PORT_BASE 0x10000
 #define	MDIO_ACCESS	0x04
@@ -158,5 +158,41 @@
 #define	    MDIO_ST_C22		0x1
 #define	    MDIO_PHY_DATA_MASK	0x0000ffff
 #define	    MDIO_PHY_DATA_SHIFT	0 
+
+#define MAC_P_MCR(gmac)		(GE_PORT_BASE + (gmac) * 0x100)
+#define	   MAX_RX_JUMBO_MASK	0xf0000000
+#define	   MAX_RX_JUMBO_SHIFT	28
+#define	   MAX_RX_JUMBO_2K	0x2	/*2 Kbytes (maxi. length on FE/GDM) */
+#define	   MAC_RX_PKT_LEN_MASK	0x03000000
+#define	   MAC_RX_PKT_LEN_SHIFT	18
+#define	   MAC_RX_PKT_LEN_1518	0x0
+#define	   MAC_RX_PKT_LEN_1536	0x1
+#define	   MAC_RX_PKT_LEN_1552	0x2
+#define	   MAC_RX_PKT_LEN_JUMBO	0x3	/* MAX_RX_JUMBO */
+#define	   MTCC_LMT_MASK	0x00F00000
+#define	   MTCC_LMT_SHIFT	20
+#define	   IPG_CFG_MASK		0x000c0000
+#define	   IPG_CFG_SHIFT	18
+#define	   IPG_CFG_96BIT	0x0
+#define	   IPG_CFG_96BIT_WS_IFG	0x2
+#define	   IPG_CFG_64BIT	0x3
+#define	   MAC_MODE		(1 << 16)
+#define	   FORCE_MODE		(1 << 15)
+#define	   MAC_TX_EN 		(1 << 14)
+#define	   MAC_RX_EN		(1 << 13)
+#define	   PRMBL_LMT_EN		(1 << 10)
+#define	   BKOFF_EN		(1 << 9)
+#define	   BACKPR_EN		(1 << 8)
+#define	   FORCE_EEE1G		(1 << 7)
+#define	   FORCE_EEE100		(1 << 6)
+#define	   FORCE_RX_FC		(1 << 5)
+#define	   FORCE_TX_FC		(1 << 4)
+#define	   FORCE_SPD_MASK	0x0000000c
+#define	   FORCE_SPD_SHIFT	2
+#define	   FORCE_SPD_10M	0x0
+#define	   FORCE_SPD_100M	0x1
+#define	   FORCE_SPD_1000M	0x2
+#define	   FORCE_DPX		(1 << 1)
+#define	   FORCE_LINK		(1 << 0)
 
 #endif /* _IF_RTREG_H_ */
