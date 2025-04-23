@@ -40,8 +40,9 @@
 
 #define	RT_GDMA1_BASE		0x500
 #define RT_GDMA2_BASE		RT_GDMA1_BASE + 0x1000
+#define RT_GDM_BASE(gmac)	((gmac)?RT_GDMA2_BASE:RT_GDMA1_BASE)
 
-#define RT_GDM_IG_CTRL(gdma)	(gdma + 0x00)
+#define	RT_GDM_IG_CTRL(gmac)	(RT_GDM_BASE(gmac) + 0x00)
 #define	    INSV_EN		(1<<25)
 #define	    STAG_EN		(1<<24)
 #define	    GDM_ICS_EN		(1<<22)
@@ -61,8 +62,8 @@
 #define     GDM_DST_PORT_QDMA	5
 #define	    GDM_DST_PORT_DISCARD 7
 
-#define RT_GDM_MAC_LSB(gdma)  (gdma + 0x08)
-#define RT_GDM_MAC_MSB(gdma)  (gdma + 0x0c)
+#define RT_GDM_MAC_LSB(gmac)  (RT_GDM_BASE(gmac) + 0x08)
+#define RT_GDM_MAC_MSB(gmac)  (RT_GDM_BASE(gmac) + 0x0c)
 
 #define RT5350_PDMA_BASE 0x0800
 
@@ -127,39 +128,42 @@
 #define RT5350_PDMA_SCH_CFG0	(RT5350_PDMA_BASE + 0x280)
 
 #define	CNTR_BASE 0x2400
-#define	    GDMA_RX_GBCNT0		CNTR_BASE + 0x00
-#define	    GDMA_RX_GPCNT0		CNTR_BASE + 0x08
-#define	    GDMA_RX_OERCNT0		CNTR_BASE + 0x10
-#define	    GDMA_RX_FERCNT0		CNTR_BASE + 0x14
-#define	    GDMA_RX_SHORT_ERCNT0 	CNTR_BASE + 0x18
-#define	    GDMA_RX_LONG_ERCNT0		CNTR_BASE + 0x1C
-#define	    GDMA_RX_CSUM_ERCNT0		CNTR_BASE + 0x20
-#define     GDMA_RX_FCCNT		CNTR_BASE + 0x24
-#define	    GDMA_TX_SKIPCNT0		CNTR_BASE + 0x28
-#define	    GDMA_TX_COLCNT0		CNTR_BASE + 0x2C
-#define	    GDMA_TX_GBCNT0		CNTR_BASE + 0x30
-#define	    GDMA_TX_GPCNT0		CNTR_BASE + 0x38
+#define CNTR_GDM(gmac)			(CNTR_BASE + (gmac)?40:0)
+#define	    GDM_RX_GBCNT_LSB(gmac)	(CNTR_GDM(gmac) + 0x00)
+#define	    GDM_RX_GBCNT_MSB(gmac)	(CNTR_GDM(gmac) + 0x04)
+#define	    GDM_RX_GPCNT(gmac)		(CNTR_GDM(gmac) + 0x08)
+#define	    GDM_RX_OERCNT(gmac)		(CNTR_GDM(gmac) + 0x10)
+#define	    GDM_RX_FERCNT(gmac)		(CNTR_GDM(gmac) + 0x14)
+#define	    GDM_RX_SHORT_ERCNT(gmac) 	(CNTR_GDM(gmac) + 0x18)
+#define	    GDM_RX_LONG_ERCNT(gmac)	(CNTR_GDM(gmac) + 0x1C)
+#define	    GDM_RX_CSUM_ERCNT(gmac)	(CNTR_GDM(gmac) + 0x20)
+#define     GDM_RX_FCCNT(gmac)		(CNTR_GDM(gmac) + 0x24)
+#define	    GDM_TX_SKIPCNT(gmac)	(CNTR_GDM(gmac) + 0x28)
+#define	    GDM_TX_COLCNT(gmac)		(CNTR_GDM(gmac) + 0x2C)
+#define	    GDM_TX_GBCNT_LSB(gmac)	(CNTR_GDM(gmac) + 0x30)
+#define	    GDM_TX_GBCNT_MSB(gmac)	(CNTR_GDM(gmac) + 0x34)
+#define	    GDM_TX_GPCNT(gmac)		(CNTR_GDM(gmac) + 0x38)
 
 #define	GE_PORT_BASE 0x10000
-#define	MDIO_ACCESS	0x04
-#define	    MDIO_CMD_ONGO	(1<<31)
+#define	MDIO_ACCESS	GE_PORT_BASE + 0x04
+#define	    MDIO_CMD_ONGO		(1<<31)
 #define	    MDIO_PHYREG_ADDR_MASK	0x3e000000
 #define	    MDIO_PHYREG_ADDR_SHIFT	25
-#define	    MDIO_PHY_ADDR_MASK	0x01f00000
-#define	    MDIO_PHY_ADDR_SHIFT	20
-#define	    MDIO_CMD_MASK	0x000c0000
-#define	    MDIO_CMD_SHIFT	18
-#define	    MDIO_CMD_WRITE	0x1
-#define	    MDIO_CMD_READ	0x2
-#define	    MDIO_CMD_READ_C45	0x3
-#define	    MDIO_ST_MASK	0x30000
-#define	    MDIO_ST_SHIFT	16
-#define	    MDIO_ST_C45		0x0
-#define	    MDIO_ST_C22		0x1
-#define	    MDIO_PHY_DATA_MASK	0x0000ffff
-#define	    MDIO_PHY_DATA_SHIFT	0 
+#define	    MDIO_PHY_ADDR_MASK		0x01f00000
+#define	    MDIO_PHY_ADDR_SHIFT		20
+#define	    MDIO_CMD_MASK		0x000c0000
+#define	    MDIO_CMD_SHIFT		18
+#define	    MDIO_CMD_WRITE		0x1
+#define	    MDIO_CMD_READ		0x2
+#define	    MDIO_CMD_READ_C45		0x3
+#define	    MDIO_ST_MASK		0x30000
+#define	    MDIO_ST_SHIFT		16
+#define	    MDIO_ST_C45			0x0
+#define	    MDIO_ST_C22			0x1
+#define	    MDIO_PHY_DATA_MASK		0x0000ffff
+#define	    MDIO_PHY_DATA_SHIFT		0
 
-#define MAC_P_MCR(gmac)		(GE_PORT_BASE + (gmac) * 0x100)
+#define MAC_P_MCR(gmac)		(GE_PORT_BASE + 0x100 + (gmac) * 0x100)
 #define	   MAX_RX_JUMBO_MASK	0xf0000000
 #define	   MAX_RX_JUMBO_SHIFT	28
 #define	   MAX_RX_JUMBO_2K	0x2	/*2 Kbytes (maxi. length on FE/GDM) */

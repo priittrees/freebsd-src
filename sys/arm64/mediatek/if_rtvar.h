@@ -254,7 +254,7 @@ struct rt_softc
 	unsigned long	 rx_mbuf_dmamap_errors;
 	unsigned long	 tx_queue_not_empty[2];
 
-	unsigned long	 rx_bytes;
+	uint64_t 	 rx_bytes;
 	unsigned long	 rx_packets;
 	unsigned long	 rx_crc_err;
 	unsigned long	 rx_phy_err;
@@ -262,7 +262,7 @@ struct rt_softc
 	unsigned long	 rx_fifo_overflows;
 	unsigned long	 rx_short_err;
 	unsigned long	 rx_long_err;
-	unsigned long	 tx_bytes;
+	uint64_t 	 tx_bytes;
 	unsigned long	 tx_packets;
 	unsigned long	 tx_skip;
 	unsigned long	 tx_collision;
