@@ -284,7 +284,7 @@ ether_request_mac(device_t dev, uint8_t *eaddr)
  * Set mac addr
  */
 static void
-rt_mac_addr(struct rt_softc *sc)
+rt_mac_addr(struct rt_softc *sc, int gmac)
 {
 
 	if_t ifp = sc->ifp;
@@ -295,11 +295,11 @@ rt_mac_addr(struct rt_softc *sc)
 	eaddr = if_getlladdr(ifp);
 
 	val = eaddr[1] | (eaddr[0] << 8);
-	RT_WRITE(sc, RT_GDM_MAC_MSB(RT_GDMA1_BASE), val);
+	RT_WRITE(sc, RT_GDM_MAC_MSB(gmac), val);
 
 	val = eaddr[5] | (eaddr[4] << 8) | (eaddr[3] << 16) |
 	    (eaddr[2] << 24);
-	RT_WRITE(sc, RT_GDM_MAC_LSB(RT_GDMA1_BASE), val);
+	RT_WRITE(sc, RT_GDM_MAC_LSB(gmac), val);
 }
 
 /*
@@ -318,7 +318,7 @@ rt_attach(device_t dev)
 	struct rt_softc *sc;
 	if_t ifp;
 	int error, i;
-	int gmac = 1;
+	int gmac = 0;
 
 #if 0
 #ifdef FDT
@@ -402,17 +402,20 @@ rt_attach(device_t dev)
 	sc->int_rx_done_mask=RT5350_INT_RXQ0_DONE;
 	sc->int_tx_done_mask=RT5350_INT_TXQ0_DONE;
 
-	RT_WRITE(sc, RT_GDM_IG_CTRL(RT_GDMA1_BASE),
-	(
-	    GDM_ICS_EN | /* Enable IP Csum */
-	    GDM_TCS_EN | /* Enable TCP Csum */
-	    GDM_UCS_EN | /* Enable UDP Csum */
-	    GDM_STRPCRC | /* Strip CRC from packet */
-	    GDM_DST_PORT_CPU << GDM_UFRC_P_SHIFT | /* fwd UCast to CPU*/
-	    GDM_DST_PORT_CPU << GDM_BFRC_P_SHIFT | /* fwd BCast to CPU*/
-	    GDM_DST_PORT_CPU << GDM_MFRC_P_SHIFT | /* fwd MCast to CPU */
-	    GDM_DST_PORT_CPU << GDM_OFRC_P_SHIFT   /* fwd Other to CPU */
-	));
+#ifdef notyet
+	if (gmac != 0)
+#endif
+		RT_WRITE(sc, RT_GDM_IG_CTRL(gmac),
+		(
+		    GDM_ICS_EN | /* Enable IP Csum */
+		    GDM_TCS_EN | /* Enable TCP Csum */
+		    GDM_UCS_EN | /* Enable UDP Csum */
+		    GDM_STRPCRC | /* Strip CRC from packet */
+		    GDM_DST_PORT_CPU << GDM_UFRC_P_SHIFT | /* fwd UCast to CPU*/
+		    GDM_DST_PORT_CPU << GDM_BFRC_P_SHIFT | /* fwd BCast to CPU*/
+		    GDM_DST_PORT_CPU << GDM_MFRC_P_SHIFT | /* fwd MCast to CPU */
+		    GDM_DST_PORT_CPU << GDM_OFRC_P_SHIFT   /* fwd Other to CPU */
+		));
 
 	rt_mac_change(sc, IFM_ETHER | IFM_1000_T | IFM_FDX, gmac);
 
@@ -488,7 +491,7 @@ rt_attach(device_t dev)
 
 	/* Attach ethernet interface */
 	ether_ifattach(ifp, sc->mac_addr);
-	rt_mac_addr(sc);
+	rt_mac_addr(sc, gmac);
 
 	/*
 	 * Tell the upper layer(s) we support long frames.
@@ -689,6 +692,7 @@ rt_init_locked(void *priv)
 #endif
 	int i, ntries;
 	uint32_t tmp;
+	int gmac = 0;
 
 	sc = priv;
 	ifp = sc->ifp;
@@ -705,17 +709,20 @@ rt_init_locked(void *priv)
 	//rt305x_sysctl_set(SYSCTL_RSTCTRL, SYSCTL_RSTCTRL_FRENG);
 
 	/* Fwd to CPU (uni|broad|multi)cast and Unknown */
-	RT_WRITE(sc, RT_GDM_IG_CTRL(RT_GDMA1_BASE),
-	(
-	    GDM_ICS_EN | /* Enable IP Csum */
-	    GDM_TCS_EN | /* Enable TCP Csum */
-	    GDM_UCS_EN | /* Enable UDP Csum */
-	    GDM_STRPCRC | /* Strip CRC from packet */
-	    GDM_DST_PORT_CPU << GDM_UFRC_P_SHIFT | /* fwd UCast to CPU */
-	    GDM_DST_PORT_CPU << GDM_BFRC_P_SHIFT | /* fwd BCast to CPU */
-	    GDM_DST_PORT_CPU << GDM_MFRC_P_SHIFT | /* fwd MCast to CPU */
-	    GDM_DST_PORT_CPU << GDM_OFRC_P_SHIFT   /* fwd Other to CPU */
-	));
+#ifdef notyet
+	if (gmac != 0)
+#endif
+		RT_WRITE(sc, RT_GDM_IG_CTRL(gmac),
+		(
+		    GDM_ICS_EN | /* Enable IP Csum */
+		    GDM_TCS_EN | /* Enable TCP Csum */
+		    GDM_UCS_EN | /* Enable UDP Csum */
+		    GDM_STRPCRC | /* Strip CRC from packet */
+		    GDM_DST_PORT_CPU << GDM_UFRC_P_SHIFT | /* fwd UCast to CPU */
+		    GDM_DST_PORT_CPU << GDM_BFRC_P_SHIFT | /* fwd BCast to CPU */
+		    GDM_DST_PORT_CPU << GDM_MFRC_P_SHIFT | /* fwd MCast to CPU */
+		    GDM_DST_PORT_CPU << GDM_OFRC_P_SHIFT   /* fwd Other to CPU */
+		));
 
 	/* disable DMA engine */
 	RT_WRITE(sc, sc->pdma_glo_cfg, 0);
@@ -840,6 +847,7 @@ rt_stop_locked(void *priv)
 
 	sc = priv;
 	ifp = sc->ifp;
+	int gmac = 0;
 
 	RT_DPRINTF(sc, RT_DEBUG_ANY, "stopping\n");
 
@@ -867,18 +875,20 @@ rt_stop_locked(void *priv)
 
 	/* reset adapter */
 	//#  RT_WRITE(sc, GE_PORT_BASE + FE_RST_GLO, PSE_RESET);
-
-	RT_WRITE(sc, RT_GDM_IG_CTRL(RT_GDMA1_BASE),
-	(
-	    GDM_ICS_EN | /* Enable IP Csum */
-	    GDM_TCS_EN | /* Enable TCP Csum */
-	    GDM_UCS_EN | /* Enable UDP Csum */
-	    GDM_STRPCRC | /* Strip CRC from packet */
-	    GDM_DST_PORT_CPU << GDM_UFRC_P_SHIFT | /* fwd UCast to CPU */
-	    GDM_DST_PORT_CPU << GDM_BFRC_P_SHIFT | /* fwd BCast to CPU */
-	    GDM_DST_PORT_CPU << GDM_MFRC_P_SHIFT | /* fwd MCast to CPU */
-	    GDM_DST_PORT_CPU << GDM_OFRC_P_SHIFT   /* fwd Other to CPU */
-	));
+#ifdef notyet
+	if (gmac != 0)
+#endif
+		RT_WRITE(sc, RT_GDM_IG_CTRL(gmac),
+		(
+		    GDM_ICS_EN | /* Enable IP Csum */
+		    GDM_TCS_EN | /* Enable TCP Csum */
+		    GDM_UCS_EN | /* Enable UDP Csum */
+		    GDM_STRPCRC | /* Strip CRC from packet */
+		    GDM_DST_PORT_CPU << GDM_UFRC_P_SHIFT | /* fwd UCast to CPU */
+		    GDM_DST_PORT_CPU << GDM_BFRC_P_SHIFT | /* fwd BCast to CPU */
+		    GDM_DST_PORT_CPU << GDM_MFRC_P_SHIFT | /* fwd MCast to CPU */
+		    GDM_DST_PORT_CPU << GDM_OFRC_P_SHIFT   /* fwd Other to CPU */
+		));
 }
 
 /*
@@ -1751,19 +1761,28 @@ rt_watchdog(struct rt_softc *sc)
 static void
 rt_update_raw_counters(struct rt_softc *sc)
 {
+	int gmac = 0;
 
-	sc->tx_bytes	+= RT_READ(sc, GDMA_TX_GBCNT0);
-	sc->tx_packets	+= RT_READ(sc, GDMA_TX_GPCNT0);
-	sc->tx_skip	+= RT_READ(sc, GDMA_TX_SKIPCNT0);
-	sc->tx_collision+= RT_READ(sc, GDMA_TX_COLCNT0);
+	uint32_t tmp;
 
-	sc->rx_bytes	+= RT_READ(sc, GDMA_RX_GBCNT0);
-	sc->rx_packets	+= RT_READ(sc, GDMA_RX_GPCNT0);
-	sc->rx_crc_err	+= RT_READ(sc, GDMA_RX_CSUM_ERCNT0);
-	sc->rx_short_err+= RT_READ(sc, GDMA_RX_SHORT_ERCNT0);
-	sc->rx_long_err	+= RT_READ(sc, GDMA_RX_LONG_ERCNT0);
-	sc->rx_phy_err	+= RT_READ(sc, GDMA_RX_FERCNT0);
-	sc->rx_fifo_overflows+= RT_READ(sc, GDMA_RX_OERCNT0);
+	sc->tx_bytes	+= RT_READ(sc, GDM_TX_GBCNT_LSB(gmac));
+	tmp = RT_READ(sc,GDM_TX_GBCNT_MSB(gmac));
+	if (tmp)
+		sc->tx_bytes    += ((uint64_t) tmp << 32);
+	sc->tx_packets	+= RT_READ(sc, GDM_TX_GPCNT(gmac));
+	sc->tx_skip	+= RT_READ(sc, GDM_TX_SKIPCNT(gmac));
+	sc->tx_collision+= RT_READ(sc, GDM_TX_COLCNT(gmac));
+
+	sc->rx_bytes	+=  GDM_RX_GBCNT_LSB(gmac);
+	tmp = RT_READ(sc,GDM_RX_GBCNT_MSB(gmac));
+	if (tmp)
+		sc->rx_bytes    += ((uint64_t)tmp << 32);
+	sc->rx_packets	+= RT_READ(sc, GDM_RX_GPCNT(gmac));
+	sc->rx_crc_err	+= RT_READ(sc, GDM_RX_CSUM_ERCNT(gmac));
+	sc->rx_short_err+= RT_READ(sc, GDM_RX_SHORT_ERCNT(gmac));
+	sc->rx_long_err	+= RT_READ(sc, GDM_RX_LONG_ERCNT(gmac));
+	sc->rx_phy_err	+= RT_READ(sc, GDM_RX_FERCNT(gmac));
+	sc->rx_fifo_overflows+= RT_READ(sc, GDM_RX_OERCNT(gmac));
 }
 
 static void
@@ -2357,7 +2376,7 @@ rt_sysctl_attach(struct rt_softc *sc)
 	    "rx_fifo_overflows", CTLFLAG_RD, &sc->rx_fifo_overflows,
 	    "Rx FIFO overflows");
 
-	SYSCTL_ADD_ULONG(ctx, SYSCTL_CHILDREN(stats), OID_AUTO,
+	SYSCTL_ADD_QUAD(ctx, SYSCTL_CHILDREN(stats), OID_AUTO,
 	    "rx_bytes", CTLFLAG_RD, &sc->rx_bytes,
 	    "Rx bytes");
 
@@ -2373,7 +2392,7 @@ rt_sysctl_attach(struct rt_softc *sc)
 	    "tx_bytes", CTLFLAG_RD, &sc->tx_bytes,
 	    "Tx bytes");
 
-	SYSCTL_ADD_ULONG(ctx, SYSCTL_CHILDREN(stats), OID_AUTO,
+	SYSCTL_ADD_QUAD(ctx, SYSCTL_CHILDREN(stats), OID_AUTO,
 	    "tx_packets", CTLFLAG_RD, &sc->tx_packets,
 	    "Tx packets");
 
@@ -2451,7 +2470,7 @@ rt_miibus_wait_idle(struct rt_softc *sc)
 	int retry;
 
 	for (retry = MII_BUSY_RETRY; retry > 0; retry--) {	
-		dat = RT_READ(sc, GE_PORT_BASE + MDIO_ACCESS);
+		dat = RT_READ(sc, MDIO_ACCESS);
 		if (!(dat & MDIO_CMD_ONGO))
 			break;
 		DELAY(10);
@@ -2488,8 +2507,8 @@ rt_mdio_writereg(device_t dev, int phy, int reg, int val)
 	    ((reg << MDIO_PHYREG_ADDR_SHIFT) & MDIO_PHYREG_ADDR_MASK) |
 	    (val & MDIO_PHY_DATA_MASK);
 
-	RT_WRITE(sc, GE_PORT_BASE + MDIO_ACCESS, dat);
-	RT_WRITE(sc, GE_PORT_BASE + MDIO_ACCESS, dat | MDIO_CMD_ONGO);
+	RT_WRITE(sc, MDIO_ACCESS, dat);
+	RT_WRITE(sc, MDIO_ACCESS, dat | MDIO_CMD_ONGO);
 	
 	retry = rt_miibus_wait_idle(sc);
 	if (!retry) {
@@ -2523,8 +2542,8 @@ rt_mdio_readreg(device_t dev, int phy, int reg)
 	    ((phy << MDIO_PHY_ADDR_SHIFT) & MDIO_PHY_ADDR_MASK) |
 	    ((reg << MDIO_PHYREG_ADDR_SHIFT) & MDIO_PHYREG_ADDR_MASK);
 
-	RT_WRITE(sc, GE_PORT_BASE + MDIO_ACCESS, dat);
-	RT_WRITE(sc, GE_PORT_BASE + MDIO_ACCESS, dat | MDIO_CMD_ONGO);
+	RT_WRITE(sc, MDIO_ACCESS, dat);
+	RT_WRITE(sc, MDIO_ACCESS, dat | MDIO_CMD_ONGO);
 
 	retry = rt_miibus_wait_idle(sc);
 	if (!retry) {
@@ -2533,7 +2552,7 @@ rt_mdio_readreg(device_t dev, int phy, int reg)
 		return (ETIMEDOUT);
 	}
 
-	return (RT_READ(sc, GE_PORT_BASE + MDIO_ACCESS) & MDIO_PHY_DATA_MASK);
+	return (RT_READ(sc, MDIO_ACCESS) & MDIO_PHY_DATA_MASK);
 }
 
 #if 0
