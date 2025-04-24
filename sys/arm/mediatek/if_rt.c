@@ -702,7 +702,8 @@ rt_init_locked(void *priv)
 	}
 
 	/* reset Rx and Tx rings */
-	tmp = 0x20000 |  FE_RST_DRX_IDX0 |
+	tmp = FE_RST_DRX_IDX1 |
+		FE_RST_DRX_IDX0 |
 		FE_RST_DTX_IDX3 |
 		FE_RST_DTX_IDX2 |
 		FE_RST_DTX_IDX1 |

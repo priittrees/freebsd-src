@@ -97,6 +97,7 @@
 #define	    FE_TX_DMA_EN	(1<<0)
 
 #define RT5350_PDMA_RST_IDX 	(RT5350_PDMA_BASE + 0x208)
+#define	    FE_RST_DRX_IDX1	(1<<17)
 #define	    FE_RST_DRX_IDX0	(1<<16)
 #define	    FE_RST_DTX_IDX3	(1<<3)
 #define	    FE_RST_DTX_IDX2	(1<<2)
