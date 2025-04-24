@@ -220,44 +220,6 @@ rt_mac_change(struct rt_softc *sc, uint32_t media, int gmac)
 	    gmac, RT_READ(sc, MAC_P_MCR(gmac)));
 }
 
-#ifdef notyet
-/* TODO MT7623 Setup clock for 1st gmac */
-
-static void
-rt_mac_clk(struct rt_softc *sc, int gmac)
-{
-#define NUM_TRGMII_CTRL		5
-#define GMAC_TRGMII_RCK_CTRL		0x300
-#define RX_RST				(1 << 31)
-#define RXC_DQSISEL			(1 << 30)
-
-#define NUM_TRGMII_CTRL			5
-
-#define GMAC_TRGMII_TD_ODT(n)		(0x354 + (n) * 8)
-#define TD_DM_DRVN_S			4
-#define TD_DM_DRVN_M			0xf0
-#define TD_DM_DRVP_S			0
-#define TD_DM_DRVP_M			0x0f
-	for (int i = 0 ; i < 5; i++)
-	{
-		RT_WRITE(sc, GE_PORT_BASE + GMAC_TRGMII_TD_ODT(i),
-		    (8 << TD_DM_DRVP_S) |
-		    (8 << TD_DM_DRVN_S));
-	
-	 	reg = RT_READ(sc, GE_PORT_BASE + GMAC_TRGMII_RCK_CTRL);
-		reg &= ~(RX_RST | RXC_DQSISEL);
-		RT_WRITE(sc, GE_PORT_BASE + GMAC_TRGMII_RCK_CTRL, reg);
-	
-	 	reg = RT_READ(sc, GE_PORT_BASE + GMAC_TRGMII_RCK_CTRL);
-		reg |= RX_RST;
-		RT_WRITE(sc, GE_PORT_BASE + GMAC_TRGMII_RCK_CTRL, reg);
-	}
-	for (int i = 0 ; i < 5; i++)
-		device_printf(sc->dev, "GMAC_TRGMII_TD_ODT 0x%x\n",
-		    RT_READ(sc, GE_PORT_BASE + GMAC_TRGMII_TD_ODT(i)));
-}
-#endif
-
 /*
  * ether_request_mac - try to find usable MAC address.
  */
@@ -622,7 +584,7 @@ rt_ifmedia_sts(if_t ifp, struct ifmediareq *ifmr)
 #else /* !IF_RT_PHY_SUPPORT */
 	/* TODO Uuri MAC_MSR */
 	ifmr->ifm_status = IFM_AVALID | IFM_ACTIVE;
-	ifmr->ifm_active = IFM_ETHER | IFM_1000_TX | IFM_FDX;
+	ifmr->ifm_active = IFM_ETHER | IFM_1000_T | IFM_FDX;
 #endif /* IF_RT_PHY_SUPPORT */
 }
 
