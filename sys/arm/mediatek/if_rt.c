@@ -74,10 +74,6 @@
 #include <dev/etherswitch/miiproxy.h>
 #include "mdio_if.h"
 
-#ifdef IF_RT_PHY_SUPPORT
-#include "miibus_if.h"
-#endif
-
 /*
  * Defines and macros
  */
@@ -141,13 +137,6 @@ static void	rt_free_tx_ring(struct rt_softc *sc,
 static void	rt_dma_map_addr(void *arg, bus_dma_segment_t *segs,
 		    int nseg, int error);
 static void	rt_sysctl_attach(struct rt_softc *sc);
-#ifdef IF_RT_PHY_SUPPORT
-void		rt_miibus_statchg(device_t);
-#endif
-#if defined(IF_RT_PHY_SUPPORT) || defined(RT_MDIO)
-static int	rt_miibus_readreg(device_t, int, int);
-static int	rt_miibus_writereg(device_t, int, int, int);
-#endif
 static int	rt_ifmedia_upd(if_t );
 static void	rt_ifmedia_sts(if_t , struct ifmediareq *);
 
@@ -418,23 +407,11 @@ rt_attach(device_t dev)
 	if_setsendqlen(ifp, ifqmaxlen);
 	if_setsendqready(ifp);
 
-#ifdef IF_RT_PHY_SUPPORT
-	//device_printf("IF_RT_PHY_SUPPORT\n");
-	error = mii_attach(dev, &sc->rt_miibus, ifp, rt_ifmedia_upd,
-	    rt_ifmedia_sts, BMSR_DEFCAPMASK, MII_PHY_ANY, MII_OFFSET_ANY, 0);
-	if (error != 0) {
-		device_printf(dev, "attaching PHYs failed\n");
-		error = ENXIO;
-		goto fail;
-	}
-#else
 	// device_printf(sc->dev, "IF_RT_ONLY_MAC\n");
 	ifmedia_init(&sc->rt_ifmedia, 0, rt_ifmedia_upd, rt_ifmedia_sts);
 	ifmedia_add(&sc->rt_ifmedia, IFM_ETHER | IFM_1000_T | IFM_FDX, 0,
 	    NULL);
 	ifmedia_set(&sc->rt_ifmedia, IFM_ETHER | IFM_1000_T | IFM_FDX);
-
-#endif /* IF_RT_PHY_SUPPORT */
 
 	// if (rt_has_switch(dev)) {
 		device_t child;
@@ -520,24 +497,6 @@ static int
 rt_ifmedia_upd(if_t ifp)
 {
 	struct rt_softc *sc;
-#ifdef IF_RT_PHY_SUPPORT
-	struct mii_data *mii;
-	struct mii_softc *miisc;
-	int error = 0;
-
-	sc = if_getsoftc(ifp);
-	RT_SOFTC_LOCK(sc);
-
-	mii = device_get_softc(sc->rt_miibus);
-	LIST_FOREACH(miisc, &mii->mii_phys, mii_list)
-		PHY_RESET(miisc);
-	error = mii_mediachg(mii);
-	RT_SOFTC_UNLOCK(sc);
-
-	return (error);
-
-#else /* !IF_RT_PHY_SUPPORT */
-
 	struct ifmedia *ifm;
 	struct ifmedia_entry *ife;
 
@@ -558,7 +517,6 @@ rt_ifmedia_upd(if_t ifp)
 	 * Ignore everything
 	 */
 	return (0);
-#endif /* IF_RT_PHY_SUPPORT */
 }
 
 /*
@@ -567,25 +525,9 @@ rt_ifmedia_upd(if_t ifp)
 static void
 rt_ifmedia_sts(if_t ifp, struct ifmediareq *ifmr)
 {
-#ifdef IF_RT_PHY_SUPPORT
-	struct rt_softc *sc;
-	struct mii_data *mii;
-
-	sc = if_getsoftc(ifp);
-
-	RT_SOFTC_LOCK(sc);
-	mii = device_get_softc(sc->rt_miibus);
-	mii_pollstat(mii);
-	ifmr->ifm_active = mii->mii_media_active;
-	ifmr->ifm_status = mii->mii_media_status;
-	ifmr->ifm_active = IFM_ETHER | IFM_100_TX | IFM_FDX;
-	ifmr->ifm_status = IFM_AVALID | IFM_ACTIVE;
-	RT_SOFTC_UNLOCK(sc);
-#else /* !IF_RT_PHY_SUPPORT */
 	/* TODO Uuri MAC_MSR */
 	ifmr->ifm_status = IFM_AVALID | IFM_ACTIVE;
 	ifmr->ifm_active = IFM_ETHER | IFM_1000_T | IFM_FDX;
-#endif /* IF_RT_PHY_SUPPORT */
 }
 
 static int
@@ -619,11 +561,6 @@ rt_detach(device_t dev)
 
 	RT_SOFTC_UNLOCK(sc);
 
-#ifdef IF_RT_PHY_SUPPORT
-	if (sc->rt_miibus != NULL)
-		device_delete_child(dev, sc->rt_miibus);
-#endif
-
 	ether_ifdetach(ifp);
 	if_free(ifp);
 
@@ -647,18 +584,12 @@ rt_init_locked(void *priv)
 {
 	struct rt_softc *sc;
 	if_t ifp;
-#ifdef IF_RT_PHY_SUPPORT
-	struct mii_data *mii;
-#endif
 	int i, ntries;
 	uint32_t tmp;
 	int gmac = 0;
 
 	sc = priv;
 	ifp = sc->ifp;
-#ifdef IF_RT_PHY_SUPPORT
-	mii = device_get_softc(sc->rt_miibus);
-#endif
 
 	RT_DPRINTF(sc, RT_DEBUG_ANY, "initializing\n");
 
@@ -765,10 +696,6 @@ rt_init_locked(void *priv)
 
 	if (rt_txrx_enable(sc) != 0)
 		goto fail;
-
-#ifdef IF_RT_PHY_SUPPORT
-	if (mii) mii_mediachg(mii);
-#endif /* IF_RT_PHY_SUPPORT */
 
 	if_setdrvflagbits(ifp, 0, IFF_DRV_OACTIVE);
 	if_setdrvflagbits(ifp, IFF_DRV_RUNNING, 0);
@@ -1075,9 +1002,6 @@ rt_ioctl(if_t ifp, u_long cmd, caddr_t data)
 {
 	struct rt_softc *sc;
 	struct ifreq *ifr;
-#ifdef IF_RT_PHY_SUPPORT
-	struct mii_data *mii;
-#endif /* IF_RT_PHY_SUPPORT */
 	int error;
 
 	sc = if_getsoftc(ifp);
@@ -1105,12 +1029,7 @@ rt_ioctl(if_t ifp, u_long cmd, caddr_t data)
 		break;
 	case SIOCGIFMEDIA:
 	case SIOCSIFMEDIA:
-#ifdef IF_RT_PHY_SUPPORT
-		mii = device_get_softc(sc->rt_miibus);
-		error = ifmedia_ioctl(ifp, ifr, &mii->mii_media, cmd);
-#else
 		error = ifmedia_ioctl(ifp, ifr, &sc->rt_ifmedia, cmd);
-#endif /* IF_RT_PHY_SUPPORT */
 		break;
 	default:
 		error = ether_ioctl(ifp, cmd, data);
@@ -2341,64 +2260,6 @@ rt_sysctl_attach(struct rt_softc *sc)
 	    "Tx collision count for GDMA ports");
 }
 
-#if defined(IF_RT_PHY_SUPPORT) || defined(RT_MDIO)
-/* This code is only work RT2880 and same chip. */
-/* TODO: make RT3052 and later support code. But nobody need it? */
-static int
-rt_miibus_readreg(device_t dev, int phy, int reg)
-{
-	struct rt_softc *sc = device_get_softc(dev);
-	int dat;
-
-	/*
-	 * PSEUDO_PHYAD is a special value for indicate switch attached.
-	 * No one PHY use PSEUDO_PHYAD (0x1e) address.
-	 */
-#ifndef RT_MDIO
-	if (phy == 31) {
-		/* Fake PHY ID for bfeswitch attach */
-		switch (reg) {
-		case MII_BMSR:
-			return (BMSR_EXTSTAT|BMSR_MEDIAMASK);
-		case MII_PHYIDR1:
-			return (0x40);		/* As result of faking */
-		case MII_PHYIDR2:		/* PHY will detect as */
-			return (0x6250);		/* bfeswitch */
-		}
-	}
-#endif
-
-	/* Wait prev command done if any */
-	while (RT_READ(sc, MDIO_ACCESS) & MDIO_CMD_ONGO);
-	dat = ((phy << MDIO_PHY_ADDR_SHIFT) & MDIO_PHY_ADDR_MASK) |
-	    ((reg << MDIO_PHYREG_ADDR_SHIFT) & MDIO_PHYREG_ADDR_MASK);
-	RT_WRITE(sc, MDIO_ACCESS, dat);
-	RT_WRITE(sc, MDIO_ACCESS, dat | MDIO_CMD_ONGO);
-	while (RT_READ(sc, MDIO_ACCESS) & MDIO_CMD_ONGO);
-
-	return (RT_READ(sc, MDIO_ACCESS) & MDIO_PHY_DATA_MASK);
-}
-
-static int
-rt_miibus_writereg(device_t dev, int phy, int reg, int val)
-{
-	struct rt_softc *sc = device_get_softc(dev);
-	int dat;
-
-	/* Wait prev command done if any */
-	while (RT_READ(sc, MDIO_ACCESS) & MDIO_CMD_ONGO);
-	dat = MDIO_CMD_WR |
-	    ((phy << MDIO_PHY_ADDR_SHIFT) & MDIO_PHY_ADDR_MASK) |
-	    ((reg << MDIO_PHYREG_ADDR_SHIFT) & MDIO_PHYREG_ADDR_MASK) |
-	    (val & MDIO_PHY_DATA_MASK);
-	RT_WRITE(sc, MDIO_ACCESS, dat);
-	RT_WRITE(sc, MDIO_ACCESS, dat | MDIO_CMD_ONGO);
-	while (RT_READ(sc, MDIO_ACCESS) & MDIO_CMD_ONGO);
-
-	return (0);
-}
-#endif
-
 static int
 rt_miibus_wait_idle(struct rt_softc *sc)
 {
@@ -2504,42 +2365,12 @@ rt_has_switch(device_t dev)
 }
 #endif
 
-#ifdef IF_RT_PHY_SUPPORT
-void
-rt_miibus_statchg(device_t dev)
-{
-	struct rt_softc *sc = device_get_softc(dev);
-	struct mii_data *mii;
-
-	mii = device_get_softc(sc->rt_miibus);
-
-	if ((mii->mii_media_status & (IFM_ACTIVE | IFM_AVALID)) ==
-	    (IFM_ACTIVE | IFM_AVALID)) {
-		switch (IFM_SUBTYPE(mii->mii_media_active)) {
-		case IFM_10_T:
-		case IFM_100_TX:
-			/* XXX check link here */
-			sc->flags |= 1;
-			break;
-		default:
-			break;
-		}
-	}
-}
-#endif /* IF_RT_PHY_SUPPORT */
-
 static device_method_t rt_dev_methods[] =
 {
 	DEVMETHOD(device_probe, rt_probe),
 	DEVMETHOD(device_attach, rt_attach),
 	DEVMETHOD(device_detach, rt_detach),
 
-#ifdef IF_RT_PHY_SUPPORT
-	/* MII interface */
-	DEVMETHOD(miibus_readreg,	rt_miibus_readreg),
-	DEVMETHOD(miibus_writereg,	rt_miibus_writereg),
-	DEVMETHOD(miibus_statchg,	rt_miibus_statchg),
-#endif
 	/* MDIO interface */
 	DEVMETHOD(mdio_readreg,		rt_mdio_readreg),
 	DEVMETHOD(mdio_writereg,	rt_mdio_writereg),
