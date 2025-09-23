@@ -819,7 +819,13 @@ arm64/mediatek/mt_tphy_if.m			optional fdt soc_mediatek
 >>>>>>> adcd810ec862 (bananapi-r64: support for mediatek mt7622 t-phy)
 =======
 arm64/mediatek/mt7622_tphy.c			optional fdt soc_mediatek
+<<<<<<< HEAD
 >>>>>>> a847050bc6e4 (bananapi-r64: support for mediatek mt7622 t-phy)
 #arm64/mediatek/mt_xhci.c                        optional fdt soc_mediatek
 arm64/mediatek/mt7531_switch.c		    	optional fdt mt7531_switch soc_mediatek
 >>>>>>> 9245504622bb (bananapi-r64: support for mediatek xhci)
+=======
+arm64/mediatek/mt7622_rng.c                     optional fdt soc_mediatek
+#arm64/mediatek/mt_xhci.c                       optional fdt soc_mediatek
+arm64/mediatek/mt7531_switch.c		    	optional fdt mt7531_switch soc_mediatek
+>>>>>>> 0f0f1919af63 (bananapi-r64: support mediatek rng)
