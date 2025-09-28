@@ -19,6 +19,11 @@ device      mt7531_switch
 device 		mdio
 #device		mt7622_eth
 
+# MMC/SD/SDIO Card slot support
+device		sdhci		# SD controller
+device		mmc		# mmc/sd bus
+device		mmcsd		# mmc/sd flash cards
+
 options         FDT
 # DTBs
 makeoptions     MODULES_EXTRA+="dtb/mediatek"
