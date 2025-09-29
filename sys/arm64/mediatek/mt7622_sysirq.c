@@ -62,6 +62,7 @@ mt7622_sysirq_convert_map_data(struct mt7622_sysirq_sc *sc,
                                 struct intr_map_data *data)
 {
     struct intr_map_data_fdt *daf;
+	 int irq;
 
     daf = (struct intr_map_data_fdt *)data;
 
@@ -73,28 +74,15 @@ mt7622_sysirq_convert_map_data(struct mt7622_sysirq_sc *sc,
     if (daf->cells[0] != 0)
         return (NULL);
 
-    int irq = daf->cells[1];
-    int flags = daf->cells[2];
+    irq = daf->cells[1];
 
     KASSERT(daf->cells[0] == 0, ("sysirq: bad interrupt parent"));
     KASSERT(irq >= 0 && irq < sc->nirq, ("sysirq: irq out of range"));
 
-    device_printf(sc->dev,"%s: irq %d flags 0x%x\n", __func__, irq, flags);
-
-    // sysirq support controllable irq inverter for each GIC SPI interrupt.
-    if (flags & (IRQ_TYPE_LEVEL_LOW | IRQ_TYPE_EDGE_FALLING)) {
-        int reg = (irq / 32) * 4;
-        int bit = irq % 32;
-        uint32_t val;
-
-        val = bus_read_4(sc->res, reg);
-        val |= (1U << bit);
-        bus_write_4(sc->res, reg, val);
-    }
-
     sc->parent_map_data->ncells = 3;
     sc->parent_map_data->cells[0] = 0;
     sc->parent_map_data->cells[1] = daf->cells[1];
+    /* sysirq support controllable irq inverter for each GIC SPI interrupt. */
     sc->parent_map_data->cells[2] = IRQ_TYPE_LEVEL_HIGH;
 
     return ((struct intr_map_data *)sc->parent_map_data);
@@ -168,16 +156,27 @@ mt7622_sysirq_deactivate_intr(device_t dev, struct intr_irqsrc *isrc,
 
 static int
 mt7622_sysirq_setup_intr(device_t dev, struct intr_irqsrc *isrc,
-                          struct resource *res, struct intr_map_data *data)
+    struct resource *res, struct intr_map_data *data)
 {
-    struct mt7622_sysirq_sc *sc;
+	struct mt7622_sysirq_sc *sc;
+	struct intr_map_data_fdt *daf;
+	uint32_t reg, val;
+	int irq, bit;
 
-    sc = device_get_softc(dev);
-    data = mt7622_sysirq_convert_map_data(sc, data);
-    if (data == NULL)
-        return (EINVAL);
+	sc = device_get_softc(dev);
+	data = mt7622_sysirq_convert_map_data(sc, data);
+	if (data == NULL)
+		return (EINVAL);
 
-    return (PIC_SETUP_INTR(sc->parent, isrc, res, data));
+	daf = (struct intr_map_data_fdt *)data;
+	irq = daf->cells[1];
+	reg = (irq / 32) * 4;
+	bit = irq % 32;
+	val = bus_read_4(sc->res, reg);
+	val |= (1U << bit);
+	bus_write_4(sc->res, reg, val);
+
+	return (PIC_SETUP_INTR(sc->parent, isrc, res, data));
 }
 
 static int
@@ -185,11 +184,22 @@ mt7622_sysirq_teardown_intr(device_t dev, struct intr_irqsrc *isrc,
     struct resource *res, struct intr_map_data *data)
 {
 	struct mt7622_sysirq_sc *sc;
+	struct intr_map_data_fdt *daf;
+	uint32_t reg, val;
+	int irq, bit;
 
 	sc = device_get_softc(dev);
 	data = mt7622_sysirq_convert_map_data(sc, data);
 	if (data == NULL)
 		return (EINVAL);
+
+	daf = (struct intr_map_data_fdt *)data;
+	irq = daf->cells[1];
+	reg = (irq / 32) * 4;
+	bit = irq % 32;
+	val = bus_read_4(sc->res, reg);
+	val &= ~(1U << bit);
+	bus_write_4(sc->res, reg, val);
 
 	return (PIC_TEARDOWN_INTR(sc->parent, isrc, res, data));
 }
