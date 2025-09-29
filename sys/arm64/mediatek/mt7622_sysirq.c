@@ -170,7 +170,7 @@ static int
 mt7622_sysirq_setup_intr(device_t dev, struct intr_irqsrc *isrc,
                           struct resource *res, struct intr_map_data *data)
 {
-    struct mt7622_sysirq_sc *sc;;
+    struct mt7622_sysirq_sc *sc;
 
     sc = device_get_softc(dev);
     data = mt7622_sysirq_convert_map_data(sc, data);
