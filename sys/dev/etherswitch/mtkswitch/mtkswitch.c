@@ -71,6 +71,16 @@ static int mtkswitch_ifmedia_upd(if_t ifp);
 static void mtkswitch_ifmedia_sts(if_t ifp, struct ifmediareq *ifmr);
 static void mtkswitch_tick(void *arg);
 
+static __inline bool mtkswitch_is_phyport(struct mtkswitch_softc *, int);
+
+#ifdef MT7531
+bool mtkswitch_is_fixed25port(struct mtkswitch_softc *, int);
+static __inline bool mtkswitch_is_portenabled(struct mtkswitch_softc *, int);
+static int
+mtkswitch_parse_child_fdt(struct mtkswitch_softc *, phandle_t child, int *pport);
+
+#endif
+
 #ifndef MT7531
 static const struct ofw_compat_data compat_data[] = {
 	{ "ralink,rt3050-esw",		MTK_SWITCH_RT3050 },
@@ -96,8 +106,9 @@ mtkswitch_identify(driver_t *driver, device_t parent)
 static int
 mtkswitch_probe(device_t dev)
 {
-#ifndef MT7531
 	struct mtkswitch_softc *sc;
+	sc = device_get_softc(dev);
+#ifndef MT7531
 	mtk_switch_type switch_type;
 
 	if (!ofw_bus_status_okay(dev))
@@ -107,7 +118,6 @@ mtkswitch_probe(device_t dev)
 	if (switch_type == MTK_SWITCH_NONE)
 		return (ENXIO);
 
-	sc = device_get_softc(dev);
 	bzero(sc, sizeof(*sc));
 	sc->sc_switchtype = switch_type;
 
@@ -123,6 +133,8 @@ mtkswitch_probe(device_t dev)
 	if (switch_node == MTK_SWITCH_NONE) {
 		return (ENXIO);
 	}
+
+	sc->node = switch_node;
 
 	if (bootverbose)
 		device_printf(dev, "Found switch_node: 0x%x\n", switch_node);
@@ -142,12 +154,14 @@ mtkswitch_attach_phys(struct mtkswitch_softc *sc)
 	/* PHYs need an interface, so we generate a dummy one */
 	snprintf(name, IFNAMSIZ, "%sport", device_get_nameunit(sc->sc_dev));
 	for (phy = 0; phy < sc->numphys; phy++) {
-		if ((sc->phymap & (1u << phy)) == 0) {
+		/* Don't attach miibus at CPU/fixed and not existed ports */
+		if (!mtkswitch_is_phyport(sc, phy)) {
 			sc->ifp[phy] = NULL;
 			sc->ifname[phy] = NULL;
 			sc->miibus[phy] = NULL;
 			continue;
 		}
+
 		sc->ifp[phy] = if_alloc(IFT_ETHER);
 		sc->ifp[phy]->if_softc = sc;
 		sc->ifp[phy]->if_flags |= IFF_UP | IFF_BROADCAST |
@@ -204,11 +218,14 @@ mtkswitch_attach(device_t dev)
 	/* sc->sc_switchtype is already decided in mtkswitch_probe() */
 	sc->numports = MTKSWITCH_MAX_PORTS;
 	sc->numphys = MTKSWITCH_MAX_PHYS;
-	sc->cpuport = MTKSWITCH_CPU_PORT;
+#ifndef MT7531
+	sc->cpuports_mask = 1 << (MTKSWITCH_CPU_PORT);
+#endif
 	sc->sc_dev = dev;
 
 	/* Attach switch related functions */
 #ifndef MT7531
+
 	if (sc->sc_switchtype == MTK_SWITCH_NONE) {
 		device_printf(dev, "Unknown switch type\n");
 		return (ENXIO);
@@ -220,6 +237,24 @@ mtkswitch_attach(device_t dev)
 	else
 		mtk_attach_switch_rt3050(sc);
 #else
+	phandle_t child, ports;
+	ports = ofw_bus_find_child(sc->node, "ports");
+	if (ports == 0) {
+		device_printf(dev, "failed to parse DTS: no ports found for "
+		    "switch\n");
+		return (ENXIO);
+	}
+
+	for (child = OF_child(ports); child != 0; child = OF_peer(child)) {
+		err = mtkswitch_parse_child_fdt(sc, child, &port);
+		if (err != 0) {
+			device_printf(sc->sc_dev, "failed to parse DTS\n");
+			return (err);
+		}
+		device_printf(dev, "port %i\n", port);
+	}
+
+
 	mtk_attach_switch_mt7631(sc);
 #endif
 
@@ -399,7 +434,7 @@ mtkswitch_miipollstat(struct mtkswitch_softc *sc)
 
 	MTKSWITCH_LOCK_ASSERT(sc, MA_OWNED);
 
-	for (i = 0; i < sc->numphys; i++) {
+        for (i = 0; i < sc->numphys; i++) {
 		if (sc->miibus[i] == NULL)
 			continue;
 		mii = device_get_softc(sc->miibus[i]);
@@ -463,11 +498,10 @@ mtkswitch_getinfo(device_t dev)
 	return (&sc->info);
 }
 
-static inline int
+bool
 mtkswitch_is_cpuport(struct mtkswitch_softc *sc, int port)
 {
-
-	return (sc->cpuport == port);
+	return ((sc->cpuports_mask & (1 << port)) ? true : false);
 }
 
 static int
@@ -611,6 +645,125 @@ mtkswitch_setconf(device_t dev, etherswitch_conf_t *conf)
 
 	return (0);
 }
+
+
+#ifdef MT7531
+//static __inline bool
+//mtkswitch_is_cpuport(struct mtkswitch_softc *sc, int port)
+//{
+//
+//	return ((sc->cpuports_mask & (1 << port)) ? true : false);
+//}
+
+bool
+mtkswitch_is_fixedport(struct mtkswitch_softc *sc, int port)
+{
+
+	return ((sc->fixed_mask & (1 << port)) ? true : false);
+}
+
+bool
+mtkswitch_is_fixed25port(struct mtkswitch_softc *sc, int port)
+{
+
+	return ((sc->fixed25_mask & (1 << port)) ? true : false);
+}
+
+static __inline bool
+mtkswitch_is_phyport(struct mtkswitch_softc *sc, int port)
+{
+	uint32_t phy_mask;
+	phy_mask = ~(sc->fixed_mask | sc->cpuports_mask);
+	phy_mask &= sc->ports_mask;
+
+	return ((phy_mask & (1 << port)) ? true : false);
+}
+
+static __inline bool
+mtkswitch_is_portenabled(struct mtkswitch_softc *sc, int port)
+{
+
+	return ((sc->ports_mask & (1 << port)) ? true : false);
+}
+
+static int
+mtkswitch_parse_fixed_link(struct mtkswitch_softc *sc, phandle_t node, uint32_t port)
+{
+	int speed;
+	phandle_t fixed_link;
+
+	fixed_link = ofw_bus_find_child(node, "fixed-link");
+
+	if (fixed_link != 0) {
+		sc->fixed_mask |= (1 << port);
+
+		if (OF_getencprop(fixed_link,
+		    "speed", &speed, sizeof(speed)) < 0) {
+			device_printf(sc->sc_dev,
+			    "Port %d has a fixed-link node without a speed "
+			    "property\n", port);
+			return (ENXIO);
+		}
+		if (speed == 2500)
+			sc->fixed25_mask |= (1 << port);
+	}
+
+	return (0);
+}
+
+static int
+mtkswitch_parse_ethernet(struct mtkswitch_softc *sc, phandle_t port_handle, uint32_t port) {
+	phandle_t switch_eth, switch_eth_handle;
+
+	if (OF_getencprop(port_handle, "ethernet", (void*)&switch_eth_handle,
+	    sizeof(switch_eth_handle)) > 0) {
+		if (switch_eth_handle > 0) {
+			switch_eth = OF_node_from_xref(switch_eth_handle);
+
+			device_printf(sc->sc_dev, "CPU port at %d\n", port);
+			sc->cpuports_mask |= (1 << port);
+
+			return (mtkswitch_parse_fixed_link(sc, switch_eth, port));
+		} else
+			device_printf(sc->sc_dev,
+				"Port %d has ethernet property but it points "
+				"to an invalid location\n", port);
+	}
+
+	return (0);
+}
+
+static int
+mtkswitch_parse_child_fdt(struct mtkswitch_softc *sc, phandle_t child, int *pport)
+{
+	uint32_t port;
+
+	if (pport == NULL)
+		return (ENXIO);
+
+	if (OF_getencprop(child, "reg", (void *)&port, sizeof(port)) < 0)
+		return (ENXIO);
+	if (port >= sc->numports)
+		return (ENXIO);
+	*pport = port;
+
+	if (mtkswitch_parse_fixed_link(sc, child, port) != 0)
+		return (ENXIO);
+
+	if (mtkswitch_parse_ethernet(sc, child, port) != 0)
+		return (ENXIO);
+
+	if ((sc->fixed_mask & (1 << port)) != 0)
+		device_printf(sc->sc_dev, "fixed port at %d\n", port);
+	else
+		device_printf(sc->sc_dev, "PHY at port %d\n", port);
+
+	// my kakk
+	sc->ports_mask |= 1 << port;
+
+	return (0);
+}
+#endif
 
 static int
 mtkswitch_getvgroup(device_t dev, etherswitch_vlangroup_t *e)

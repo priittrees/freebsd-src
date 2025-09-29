@@ -495,8 +495,7 @@ extern void
 mtk_attach_switch_rt3050(struct mtkswitch_softc *sc)
 {
 
-	sc->portmap = 0x7f;
-	sc->phymap = 0x1f;
+	sc->ports_mask = 0x5f
 
 	sc->info.es_nports = 7;
 	sc->info.es_vlan_caps = ETHERSWITCH_VLAN_DOT1Q;

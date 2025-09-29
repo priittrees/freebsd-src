@@ -319,10 +319,18 @@ mtkswitch_port_init(struct mtkswitch_softc *sc, int port)
 	sc->hal.mtkswitch_write(sc, MTKSWITCH_PVC(port), val);
 
 	val = PMCR_CFG_DEFAULT;
-	if (port == sc->cpuport){
+
+	if (mtkswitch_is_cpuport(sc, port)) {
+		// do nothing now.
+	}
+
+	if (mtkswitch_is_fixed25port(sc, port))
 		val |= PMCR_FORCE_LINK | PMCR_FORCE_DPX | PMCR_FORCE_SPD_1000 |
 		    MT7631_PMCR_FORCE_MODE | PMCR_MAC_MODE;
-	}
+	else if (mtkswitch_is_fixedport(sc, port))
+		val |= PMCR_FORCE_LINK | PMCR_FORCE_DPX | PMCR_FORCE_SPD_1000 |
+		    MT7631_PMCR_FORCE_MODE | PMCR_MAC_MODE;
+
 	/* Set port's MAC to default settings */
 	sc->hal.mtkswitch_write(sc, MTKSWITCH_PMCR(port), val);
 }
@@ -608,9 +616,6 @@ mtkswitch_vlan_set_pvid(struct mtkswitch_softc *sc, int port, int pvid)
 extern void
 mtk_attach_switch_mt7631(struct mtkswitch_softc *sc)
 {
-
-	sc->portmap = 0x7f;
-	sc->phymap = 0x1e;
 
 	sc->info.es_nports = 7;
 	sc->info.es_vlan_caps = ETHERSWITCH_VLAN_DOT1Q;

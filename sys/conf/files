@@ -5252,5 +5252,5 @@ arm/mediatek/mtk_sys_cirq.c	optional mtk_sys_cirq fdt
 arm/mediatek/mtk_mmc.c		optional mmc fdt
 
 # Ralink/Mediatek Ethernet driver
-arm/mediatek/if_rt.c                    optional rt
+arm/mediatek/if_rt.c		optional rt
 

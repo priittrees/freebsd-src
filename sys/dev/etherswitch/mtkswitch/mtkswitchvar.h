@@ -44,10 +44,9 @@ typedef enum {
 
 #define	MTKSWITCH_MAX_PORTS	7
 #define MTKSWITCH_MAX_PHYS	7
-#ifndef MT7531
-#define	MTKSWITCH_CPU_PORT	6
-#else
-#define	MTKSWITCH_CPU_PORT	5
+#define	MTKSWITCH_CPU_PORT	6	// mt7531 we search it
+
+#ifdef MT7531
 #define	MTKSWITCH_NUM_VLANS	4096
 /* Size of the ALR table in hardware */
 #define MTKSWITCH_NUM_ARL_ENTRIES	4096
@@ -67,13 +66,14 @@ struct mtkswitch_softc {
 	device_t	sc_dev;
 #ifdef	MT7531
 	phandle_t	node;
+        uint32_t	fixed25_mask;
 #endif
 	struct resource *sc_res;
 	int		numphys;
-	uint32_t	phymap;
 	int		numports;
-	uint32_t	portmap;
-	int		cpuport;
+	uint32_t	ports_mask;
+	uint32_t	cpuports_mask;
+	uint32_t	fixed_mask;
 #ifndef	MT7531
 	uint32_t	valid_vlans;
 #endif
@@ -182,10 +182,13 @@ struct mtkswitch_softc {
 #define	DEBUG_INCRVAR(var)
 #endif
 
+extern bool mtkswitch_is_cpuport(struct mtkswitch_softc *, int);
+extern bool mtkswitch_is_fixedport(struct mtkswitch_softc *, int);
 #ifndef	MT7531
 extern void mtk_attach_switch_rt3050(struct mtkswitch_softc *);
 extern void mtk_attach_switch_mt7620(struct mtkswitch_softc *);
 #else
+extern bool mtkswitch_is_fixed25port(struct mtkswitch_softc *, int);
 extern void mtk_attach_switch_mt7631(struct mtkswitch_softc *);
 extern int mt7531_sysctl_attach(struct mtkswitch_softc *sc);
 extern int mt7531_atu_fetch_table(device_t dev, etherswitch_atu_table_t *table);
