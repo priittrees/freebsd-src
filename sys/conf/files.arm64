@@ -808,5 +808,5 @@ arm64/mediatek/mt7622_rng.c                     optional fdt soc_mediatek
 arm64/mediatek/mt7531_switch.c		    	optional fdt mt7531_switch soc_mediatek
 arm64/mediatek/mt_mmc.c			optional mmc fdt soc_mediatek
 # Ralink/Mediatek Ethernet driver
-arm/mediatek/if_rt.c				optional rt
+arm64/mediatek/if_rt.c				optional rt
 
