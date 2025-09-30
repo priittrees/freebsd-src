@@ -1509,7 +1509,6 @@ rt_rx_eof(struct rt_softc *sc, struct rt_softc_rx_ring *ring, int limit)
 				m->m_pkthdr.csum_flags |= CSUM_IP_VALID;
 				m->m_pkthdr.csum_data = 0xffff;
 			}
-			m->m_flags &= ~M_HASFCS;
 		}
 
 		if_input(ifp, m);
