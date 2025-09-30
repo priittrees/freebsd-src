@@ -415,7 +415,7 @@ rt_attach(device_t dev)
 
 	// if (rt_has_switch(dev)) {
 		device_t child;
-		child = device_add_child(dev, "mdio", -1);
+		child = device_add_child(dev, "mdio", DEVICE_UNIT_ANY);
 		bus_attach_children(sc->dev);
 		bus_attach_children(child);
 		// device_printf(dev, "Switch attached.\n");
