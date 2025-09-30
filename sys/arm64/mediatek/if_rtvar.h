@@ -58,7 +58,7 @@
 
 // #include "opt_if_rt.h"
 
-#include <dev/extres/syscon/syscon.h>
+#include <dev/syscon/syscon.h>
 
 #define	RT_SOFTC_LOCK(sc)		mtx_lock(&(sc)->lock)
 #define	RT_SOFTC_UNLOCK(sc)		mtx_unlock(&(sc)->lock)
