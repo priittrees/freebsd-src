@@ -12,16 +12,16 @@ device iic
 device iicbus
 device iicbb
 
-# eth switch
-device		etherswitch     # Enable etherswitch support
-device		mtkswitch       # Enable mediatek 7531 switch
-device 		miibus
-device 		mdio
-
 # Ethernet, BPF and bridge support
+device          miibus
+device          mdio
 device          rt
 device          bpf
 device          if_bridge
+
+# Ethernet switch
+device		etherswitch             # Enable etherswitch support
+device		mtkswitch
 
 # MMC/SD/SDIO Card slot support
 device		sdhci		# SD controller
