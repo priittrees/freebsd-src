@@ -1,6 +1,5 @@
 /*-
- * Copyright (c) 2019 - 2021 Priit Trees <trees@neti.ee>
- * All rights reserved.
+ * Copyright (c) 2019 - 2025 Priit Trees <trees@neti.ee>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
