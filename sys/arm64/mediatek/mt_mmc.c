@@ -1,6 +1,5 @@
 /*-
- * Copyright (c) 2025 - Martin Filla
- * Copyright (c) 2019 - 2021 Priit Trees <trees@neti.ee>
+ * Copyright (c) 2019 - 2025 Priit Trees <trees@neti.ee>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -40,8 +39,8 @@
 
 #include <machine/bus.h>
 
-#include <dev/clk/clk.h>
-#include <dev/regulator/regulator.h>
+#include <dev/extres/clk/clk.h>
+#include <dev/extres/regulator/regulator.h>
 
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
@@ -50,7 +49,10 @@
 #include <dev/mmc/mmcreg.h>
 #include <dev/mmc/mmcbrvar.h>
 #include <dev/mmc/mmc_fdt_helpers.h>
-#include <arm64/mediatek/mt_mmc.h>
+
+#include <arm/mediatek/mtk_mmc.h>
+// #include <mips/mediatek/mtk_soc.h>
+// #include <mips/mediatek/mtk_sysctl.h>
 
 #undef MTK_MMC_DEBUG
 
@@ -211,15 +213,16 @@ mt_mmc_attach(device_t dev)
 		goto fail;
 	}
 
-	if (clk_get_by_ofw_name(dev, 0, "hclk", &sc->hclk)) {
-		device_printf(dev, "cannot get hclk clock\n");
-		goto fail;
-	}
+	/* Set some default for freq and supported mode*/
+	//if (clk_get_by_ofw_name(dev, 0, "clk", &sc->clk)) {
+	//	device_printf(dev, "cannot get clock\n");
+	//	goto fail;
+	//}
 
-	if (clk_get_by_ofw_name(dev, 0, "source", &sc->source)) {
-		device_printf(dev, "cannot get source clock\n");
-		goto fail;
-	}
+	//if (clk_get_by_ofw_name(dev, 0, "hclk", &sc->hclk)) {
+	//	device_printf(dev, "cannot get clock\n");
+	//	goto fail;
+	//}
 
 	sc->sc_host.f_max = 25000000;
 	sc->sc_host.f_min = 260000;
@@ -986,36 +989,33 @@ mt_mmc_write_ivar(device_t bus, device_t child, int which,
 static int
 mt_mmc_config_clock(struct mt_mmc_softc *sc, uint32_t freq)
 {
-	uint32_t sclk;
+//	uint32_t sclk;
 	uint64_t hclk;
 	uint32_t div;
 	int mode;
 	uint32_t val;
 
-	clk_get_freq(sc->hclk, &hclk);
-//	hclk = 800000000;
+//	clk_get_freq(sc->hclk, &hclk);
+	hclk = 800000000;
 
 	if (freq >= hclk) {
 		/* Use msdc source clock as bus clock */
 		mode = 1;
 		div  = 0;
-		sclk = hclk;
+//		sclk = hclk;
 	} else {
 		/* Use clock divider msdc source clock */
 		mode = 0;
 		if (freq >= (hclk >> 1)) {
 			/* divider 1/2 */
 			div = 0;
-			sclk = hclk >> 1;
+			//sclk = hclk >> 1;
 		} else {
 			/* divider 1/(n * 4) n: 1 - 255 */
 			div = (hclk + ((freq << 2) - 1)) / (freq << 2);
-			sclk = (hclk >> 2) / div;
+//			sclk = (hclk >> 2) / div;
 		}
 	}
-
-	device_printf(sc->sc_dev, "%s sclk %u hclk %lu freq %u div %u\n",
-		__func__, sclk, hclk, freq, div);
 
 	val = MTK_MMC_READ_4(sc, MTK_MSDC_CFG);
 	if (mode) {
