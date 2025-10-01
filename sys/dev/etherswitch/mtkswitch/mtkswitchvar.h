@@ -44,10 +44,20 @@ typedef enum {
 
 #define	MTKSWITCH_MAX_PORTS	7
 #define MTKSWITCH_MAX_PHYS	7
+
+/*bpi-r2-pro cpu port 5*/
+#if 0
 #ifndef MT7531
 #define	MTKSWITCH_CPU_PORT	6
 #else
 #define	MTKSWITCH_CPU_PORT	5
+#define	MTKSWITCH_NUM_VLANS	4096
+/* Size of the ALR table in hardware */
+#define MTKSWITCH_NUM_ARL_ENTRIES	4096
+#endif
+#else
+/*bpi-r64 cpu port 6*/
+#define MTKSWITCH_CPU_PORT      6
 #define	MTKSWITCH_NUM_VLANS	4096
 /* Size of the ALR table in hardware */
 #define MTKSWITCH_NUM_ARL_ENTRIES	4096

@@ -610,7 +610,13 @@ mtk_attach_switch_mt7631(struct mtkswitch_softc *sc)
 {
 
 	sc->portmap = 0x7f;
+
+	/* bpi-r2-pro port 0 not connected */
+#if 0
 	sc->phymap = 0x1e;
+#else
+	sc->phymap = 0x1f;
+#endif
 
 	sc->info.es_nports = 7;
 	sc->info.es_vlan_caps = ETHERSWITCH_VLAN_DOT1Q;
