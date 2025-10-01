@@ -765,7 +765,7 @@ mt7531_sysctl_port_mib_read_count(SYSCTL_HANDLER_ARGS)
 	if (port < 0 || port > MTKSWITCH_MAX_PORTS)
 		return (EINVAL);
 
-	MTKSWITCH_LOCK_ASSERT(sc, MA_OWNED);
+	//MTKSWITCH_LOCK_ASSERT(sc, MA_OWNED);
 	MTKSWITCH_LOCK(sc);
 	val = mt7531_hw_port_mib_read_count(sc, port, index);
 	MTKSWITCH_UNLOCK(sc);
@@ -798,7 +798,7 @@ mt7531_sysctl_port_mib_clear_count(SYSCTL_HANDLER_ARGS)
 	if (error || !req->newptr)
 		return (error);
 
-	MTKSWITCH_LOCK_ASSERT(sc, MA_OWNED);
+	//MTKSWITCH_LOCK_ASSERT(sc, MA_OWNED);
 	MTKSWITCH_LOCK(sc);
 	mt7531_hw_port_mib_clear(sc, port, index, val);
 	MTKSWITCH_UNLOCK(sc);
