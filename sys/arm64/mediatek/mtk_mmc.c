@@ -50,7 +50,7 @@
 #include <dev/mmc/mmcbrvar.h>
 #include <dev/mmc/mmc_fdt_helpers.h>
 
-#include <arm/mediatek/mtk_mmc.h>
+#include <arm64/mediatek/mtk_mmc.h>
 // #include <mips/mediatek/mtk_soc.h>
 // #include <mips/mediatek/mtk_sysctl.h>
 
