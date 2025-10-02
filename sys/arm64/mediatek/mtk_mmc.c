@@ -1037,7 +1037,7 @@ mtk_mmc_config_clock(struct mtk_mmc_softc *sc, uint32_t freq)
 		 device_printf(sc->sc_dev, "cannot didsble mmc clock\n");
 
 	val = MTK_MMC_READ_4(sc, MTK_MSDC_CFG);
-	device_printf(sc->sc_dev, "%s MTK_MSDC_CFG val %0x\n", __func__ val);
+	device_printf(sc->sc_dev, "%s MTK_MSDC_CFG val %0x\n", __func__, val);
 	if (mode) {
 		val |= MTK_MSDC_CFG_CCKMD;
 	} else {
