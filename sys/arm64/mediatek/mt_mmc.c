@@ -252,7 +252,7 @@ mt_mmc_attach(device_t dev)
 
     error = clk_enable(sc->source);
     if (error != 0) {
-        device_printf(dev, "Cannot enable source clock: %d\n", rv);
+        device_printf(dev, "Cannot enable source clock: %d\n", error);
         goto fail;
     }
 
