@@ -251,8 +251,8 @@ mt_mmc_attach(device_t dev)
 	MTK_MMC_WRITE_4(sc, MTK_MSDC_PATCH_BIT0, val);
 
     error = clk_enable(sc->source);
-    if (error) {
-        device_printf(sc->sc_dev, "cannot enable sourse clock\n");
+    if (error != 0) {
+        device_printf(dev, "Cannot enable source clock: %d\n", rv);
         goto fail;
     }
 
