@@ -169,6 +169,7 @@ mt_mmc_attach(device_t dev)
 	struct sysctl_ctx_list *ctx;
 	struct sysctl_oid_list *tree;
 	uint32_t val;
+    int error;
 
 	sc = device_get_softc(dev);
 	sc->sc_dev = dev;
@@ -249,6 +250,11 @@ mt_mmc_attach(device_t dev)
 	val |= MTK_MSDC_PATCH_BIT0_PTCH30;
 	MTK_MMC_WRITE_4(sc, MTK_MSDC_PATCH_BIT0, val);
 
+    error = clk_enable(sc->sclk);
+    if (error) {
+        device_printf(sc->sc_dev, "cannot enable sourse clock\n");
+        goto fail;
+    }
 
 	if (sc->child == NULL) {
 		sc->child = device_add_child(sc->sc_dev, "mmc", -1);
