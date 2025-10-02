@@ -70,7 +70,7 @@
 
 struct mtk_mmc_softc {
 	device_t		sc_dev;
-	clk_t			clk;
+	clk_t			sclk;
 	clk_t			hclk;
 
 	int			sc_bus_busy;
@@ -170,6 +170,7 @@ mtk_mmc_attach(device_t dev)
 	struct sysctl_ctx_list *ctx;
 	struct sysctl_oid_list *tree;
 	uint32_t val;
+	int error;
 
 	sc = device_get_softc(dev);
 	sc->sc_dev = dev;
@@ -212,15 +213,15 @@ mtk_mmc_attach(device_t dev)
 	}
 
 	/* Set some default for freq and supported mode*/
-	//if (clk_get_by_ofw_name(dev, 0, "clk", &sc->clk)) {
-	//	device_printf(dev, "cannot get clock\n");
-	//	goto fail;
-	//}
+	if (clk_get_by_ofw_name(dev, 0, "source", &sc->sclk)) {
+		device_printf(dev, "cannot get clock\n");
+		goto fail;
+	}
 
-	//if (clk_get_by_ofw_name(dev, 0, "hclk", &sc->hclk)) {
-	//	device_printf(dev, "cannot get clock\n");
-	//	goto fail;
-	//}
+	if (clk_get_by_ofw_name(dev, 0, "hclk", &sc->hclk)) {
+		device_printf(dev, "cannot get clock\n");
+		goto fail;
+	}
 
 	sc->sc_host.f_max = 25000000;
 	sc->sc_host.f_min = 260000;
@@ -251,6 +252,11 @@ mtk_mmc_attach(device_t dev)
 	val |= MTK_MSDC_PATCH_BIT0_PTCH30;
 	MTK_MMC_WRITE_4(sc, MTK_MSDC_PATCH_BIT0, val);
 
+	error = clk_enable(sc->sclk);
+	if (error) {
+		 device_printf(sc->sc_dev, "cannot enable sourse clock\n");
+		goto fail;
+	}
 
 	if (sc->child == NULL) {
 		sc->child = device_add_child(sc->sc_dev, "mmc", -1);
@@ -259,8 +265,8 @@ mtk_mmc_attach(device_t dev)
 			(void)device_probe_and_attach(sc->child);
 		}
 	}
-	 mmc_fdt_parse(dev, 0, &sc->mmc_helper, &sc->sc_host);
-	 mmc_fdt_gpio_setup(dev, 0, &sc->mmc_helper, mtk_mmc_helper_cd_handler);
+	mmc_fdt_parse(dev, 0, &sc->mmc_helper, &sc->sc_host);
+	mmc_fdt_gpio_setup(dev, 0, &sc->mmc_helper, mtk_mmc_helper_cd_handler);
 	return (0);
 
 fail:
@@ -979,51 +985,84 @@ mtk_mmc_write_ivar(device_t bus, device_t child, int which,
 	return (0);
 }
 
+/* */
 static int
 mtk_mmc_config_clock(struct mtk_mmc_softc *sc, uint32_t freq)
 {
 
-//	uint32_t sclk;
+	uint32_t mclk;
 	uint64_t hclk;
+	uint64_t sclk;
 	uint32_t div;
 	int mode;
 	uint32_t val;
+	int error;
 
-//	clk_get_freq(sc->hclk, &hclk);
-	hclk = 800000000;
+#if 0
+	clk_get_freq(sc->sclk, &sclk);
+#else
+	sclk = 200000000;
+#endif
 
-	if (freq >= hclk) {
+	clk_get_freq(sc->hclk, &hclk);
+
+	if (freq >= sclk) {
 		/* Use msdc source clock as bus clock */
 		mode = 1;
 		div  = 0;
-//		sclk = hclk;
+		mclk = sclk;
 	} else {
 		/* Use clock divider msdc source clock */
 		mode = 0;
-		if (freq >= (hclk >> 1)) {
+		if (freq >= (sclk >> 1)) {
 			/* divider 1/2 */
 			div = 0;
-			//sclk = hclk >> 1;
+			mclk = sclk >> 1;
 		} else {
 			/* divider 1/(n * 4) n: 1 - 255 */
-			div = (hclk + ((freq << 2) - 1)) / (freq << 2);
-//			sclk = (hclk >> 2) / div;
+			div = (sclk + ((freq << 2) - 1)) / (freq << 2);
+			mclk = (sclk >> 2) / div;
 		}
 	}
 
+	device_printf(sc->sc_dev, "%s, mclk %i sclk %lu hclk %lu div %i mode %i\n",
+	    __func__, mclk, sclk, hclk, div, mode);
+
 	val = MTK_MMC_READ_4(sc, MTK_MSDC_CFG);
+	val &= ~MTK_MSDC_CFG_CCKPD;
+	MTK_MMC_WRITE_4(sc, MTK_MSDC_CFG, val);
+
+	error = clk_disable(sc->sclk);
+	if (error)
+		 device_printf(sc->sc_dev, "cannot didsble mmc clock\n");
+
+	val = MTK_MMC_READ_4(sc, MTK_MSDC_CFG);
+	device_printf(sc->sc_dev, "%s MTK_MSDC_CFG val %0x\n", __func__ val);
 	if (mode) {
 		val |= MTK_MSDC_CFG_CCKMD;
 	} else {
 		val &= ~MTK_MSDC_CFG_CCKMD;
 	}
+
 	val &= ~MTK_MSDC_CFG_CCKDIV_MASK;
 	val |= (div << MTK_MSDC_CFG_CCKDIV_SHIFT)
 	    & MTK_MSDC_CFG_CCKDIV_MASK;
+
+	device_printf(sc->sc_dev, "%s MTK_MSDC_CFG val %0x\n", __func__, val);
+
 	MTK_MMC_WRITE_4(sc, MTK_MSDC_CFG, val);
 
+	error = clk_enable(sc->sclk);
+	if (error)
+		 device_printf(sc->sc_dev, "cannot enable mmc clock\n");
+
+//TODO Dangerous fix it. May get stuck in an infinite loop.
 	while (!(MTK_MMC_READ_4(sc, MTK_MSDC_CFG) & MTK_MSDC_CFG_CCKSB))
 		DELAY(1000);
+
+	val = MTK_MMC_READ_4(sc, MTK_MSDC_CFG);
+	val |= MTK_MSDC_CFG_CCKPD;
+	MTK_MMC_WRITE_4(sc, MTK_MSDC_CFG, val);
 
 	return (0);
 }
