@@ -250,7 +250,7 @@ mt_mmc_attach(device_t dev)
 	val |= MTK_MSDC_PATCH_BIT0_PTCH30;
 	MTK_MMC_WRITE_4(sc, MTK_MSDC_PATCH_BIT0, val);
 
-    error = clk_enable(sc->sclk);
+    error = clk_enable(sc->source);
     if (error) {
         device_printf(sc->sc_dev, "cannot enable sourse clock\n");
         goto fail;
