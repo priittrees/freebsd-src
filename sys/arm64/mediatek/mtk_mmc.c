@@ -124,7 +124,8 @@ static void mtk_mmc_teardown_dma(struct mtk_mmc_softc *sc);
 static int mtk_mmc_reset(struct mtk_mmc_softc *);
 
 static void mtk_mmc_intr(void *);
-static int mtk_mmc_config_clock(struct mtk_mmc_softc *, uint32_t);
+static int mtk_mmc_config_clock(
+    struct mtk_mmc_softc *, uint32_t freq, enum mmc_bus_timing timing);
 static void mtk_mmc_helper_cd_handler(device_t, bool);
 
 static int mtk_mmc_update_ios(device_t, device_t);
@@ -985,9 +986,9 @@ mtk_mmc_write_ivar(device_t bus, device_t child, int which,
 	return (0);
 }
 
-/* */
 static int
-mtk_mmc_config_clock(struct mtk_mmc_softc *sc, uint32_t freq)
+mtk_mmc_config_clock(struct mtk_mmc_softc *sc, uint32_t freq,
+    enum mmc_bus_timing timing)
 {
 
 	uint32_t mclk;
@@ -1001,26 +1002,56 @@ mtk_mmc_config_clock(struct mtk_mmc_softc *sc, uint32_t freq)
 	clk_get_freq(sc->sclk, &sclk);
 	clk_get_freq(sc->hclk, &hclk);
 
-	if (freq >= sclk) {
+	if (timing == bus_timing_uhs_ddr50 ||
+	    timing == bus_timing_mmc_ddr52 ||
+	    timing == bus_timing_mmc_hs400)
+	{
+		if (timing == bus_timing_mmc_hs400)
+			mode = (MTK_MSDC_CFG_CCKMD | MTK_MSDC_CFG_DDR);
+		else
+			mode = MTK_MSDC_CFG_DDR;
+
+		if (freq >= (sclk >> 2)) {
+			div  = 0; /* mean div = 1/4 */
+			mclk = sclk >> 2; /* mclk = sclk / 4 */
+		}
+		else {
+			div = (sclk + ((freq << 2) - 1)) / (freq << 2);
+			mclk = (sclk >> 2) / div;
+			div = (div >> 1);
+		}
+
+		if (timing == bus_timing_mmc_hs400 && freq >= (sclk >> 1)) {
+			val = MTK_MMC_READ_4(sc, MTK_MSDC_CFG);
+			val |= MTK_MSDC_CFG_HS400_CK_MODE_EXTRA;
+			MTK_MMC_WRITE_4(sc, MTK_MSDC_CFG, val);
+			div = 0;
+			mclk = sclk >> 1;
+		}
+	}
+	else if (freq >= sclk) {
 		/* Use msdc source clock as bus clock */
-		mode = 1;
+		mode = MTK_MSDC_CFG_CCKMD;
 		div  = 0;
 		mclk = sclk;
-	} else {
+	}
+	else {
 		/* Use clock divider msdc source clock */
-		mode = 0;
+		mode = 0x0;
 		if (freq >= (sclk >> 1)) {
 			/* divider 1/2 */
 			div = 0;
 			mclk = sclk >> 1;
-		} else {
+		}
+		else {
 			/* divider 1/(n * 4) n: 1 - 255 */
 			div = (sclk + ((freq << 2) - 1)) / (freq << 2);
 			mclk = (sclk >> 2) / div;
 		}
 	}
 
-	device_printf(sc->sc_dev, "%s, mclk %i sclk %lu hclk %lu div %i mode %i\n",
+	device_printf(sc->sc_dev,
+	    "%s, mclk %i sclk %lu hclk %lu div %i mode %i\n",
 	    __func__, mclk, sclk, hclk, div, mode);
 
 	val = MTK_MMC_READ_4(sc, MTK_MSDC_CFG);
@@ -1032,18 +1063,17 @@ mtk_mmc_config_clock(struct mtk_mmc_softc *sc, uint32_t freq)
 		 device_printf(sc->sc_dev, "cannot didsble mmc clock\n");
 
 	val = MTK_MMC_READ_4(sc, MTK_MSDC_CFG);
-	device_printf(sc->sc_dev, "%s MTK_MSDC_CFG val %0x\n", __func__, val);
-	if (mode) {
-		val |= MTK_MSDC_CFG_CCKMD;
-	} else {
-		val &= ~MTK_MSDC_CFG_CCKMD;
-	}
-
+	device_printf(sc->sc_dev,
+	    "%s read MTK_MSDC_CFG val 0x%x\n", __func__, val);
 	val &= ~MTK_MSDC_CFG_CCKDIV_MASK;
 	val |= (div << MTK_MSDC_CFG_CCKDIV_SHIFT)
 	    & MTK_MSDC_CFG_CCKDIV_MASK;
 
-	device_printf(sc->sc_dev, "%s MTK_MSDC_CFG val %0x\n", __func__, val);
+	val &= ~(MTK_MSDC_CFG_DDR | MTK_MSDC_CFG_CCKMD);
+	val |= mode;
+
+	device_printf(sc->sc_dev,
+	    "%s write MTK_MSDC_CFG val 0x%x\n", __func__, val);
 
 	MTK_MMC_WRITE_4(sc, MTK_MSDC_CFG, val);
 
@@ -1149,7 +1179,7 @@ mtk_mmc_update_ios(device_t bus, device_t child)
 
 	if (ios->clock && ios->clock != sc->sc_clock) {
 		sc->sc_clock = ios->clock;
-		mtk_mmc_config_clock(sc, ios->clock);
+		mtk_mmc_config_clock(sc, ios->clock, ios->timing);
 	}
 
 	return (0);
