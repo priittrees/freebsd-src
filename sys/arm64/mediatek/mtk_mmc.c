@@ -998,12 +998,7 @@ mtk_mmc_config_clock(struct mtk_mmc_softc *sc, uint32_t freq)
 	uint32_t val;
 	int error;
 
-#if 0
 	clk_get_freq(sc->sclk, &sclk);
-#else
-	sclk = 200000000;
-#endif
-
 	clk_get_freq(sc->hclk, &hclk);
 
 	if (freq >= sclk) {
@@ -1113,6 +1108,9 @@ mtk_mmc_update_ios(device_t bus, device_t child)
 
 	ios = &sc->sc_host.ios;
 
+	device_printf(bus, "%s Setting up clk %u bus_width %d, timing: %d\n",
+		__func__, ios->clock, ios->bus_width, ios->timing);
+
 	/* Set the bus width. */
 	switch (ios->bus_width) {
 	case bus_width_1:
@@ -1151,14 +1149,6 @@ mtk_mmc_update_ios(device_t bus, device_t child)
 
 	if (ios->clock && ios->clock != sc->sc_clock) {
 		sc->sc_clock = ios->clock;
-
-		MTK_MMC_WRITE_4(sc, MTK_MSDC_IOCON,      0x00000000);
-		// for MT7620 E2 and afterward
-		MTK_MMC_WRITE_4(sc, MTK_MSDC_DAT_RDDLY0, 0x10101010);
-		MTK_MMC_WRITE_4(sc, MTK_MSDC_DAT_RDDLY1, 0x00000000);
-		// for MT7620 E2 and afterward
-		MTK_MMC_WRITE_4(sc, MTK_MSDC_PAD_TUNE,   0x84101010);
-
 		mtk_mmc_config_clock(sc, ios->clock);
 	}
 
