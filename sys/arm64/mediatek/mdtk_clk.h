@@ -67,6 +67,21 @@
     .off_value = 0,                            \
 }
 
+/* Inverter gate. */
+#define	I_GATE(_id, cname, plist, o, s)			\
+{							\
+	.clkdef.id = _id,				\
+	.clkdef.name = cname,				\
+	.clkdef.parent_names = (const char *[]){plist},	\
+	.clkdef.parent_cnt = 1,				\
+	.clkdef.flags = CLK_NODE_STATIC_STRINGS,	\
+	.offset = o,					\
+	.shift = s,					\
+	.mask = 1,					\
+	.on_value = 0,					\
+	.off_value = 1,					\
+}
+
 /* Fixed rate clock. */
 #define    FRATE(_id, _name, _freq)                    \
 {                                    \
