@@ -50,7 +50,7 @@
 #include <dev/mmc/mmcbrvar.h>
 #include <dev/mmc/mmc_fdt_helpers.h>
 
-#include <arm64/mediatek/mtk_mmc.h>
+#include <arm64/mediatek/mt_mmc.h>
 // #include <mips/mediatek/mtk_soc.h>
 // #include <mips/mediatek/mtk_sysctl.h>
 
@@ -267,7 +267,7 @@ mt_mmc_attach(device_t dev)
 		}
 	}
 	mmc_fdt_parse(dev, 0, &sc->mmc_helper, &sc->sc_host);
-	mmc_fdt_gpio_setup(dev, 0, &sc->mmc_helper, mtk_mmc_helper_cd_handler);
+	mmc_fdt_gpio_setup(dev, 0, &sc->mmc_helper, mt_mmc_helper_cd_handler);
 	return (0);
 
 fail:
@@ -1149,7 +1149,7 @@ mt_mmc_update_ios(device_t bus, device_t child)
 
 	if (ios->clock && ios->clock != sc->sc_clock) {
 		sc->sc_clock = ios->clock;
-		mtk_mmc_config_clock(sc, ios->clock);
+		mt_mmc_config_clock(sc, ios->clock);
 	}
 
 	return (0);
