@@ -1562,11 +1562,11 @@ rt_tx_eof(struct rt_softc *sc, struct rt_softc_tx_ring *ring)
 	struct rt_txdesc *desc;
 	struct rt_softc_tx_data *data;
 	uint32_t index;
-	// int ndescs, nframes;
+	int ndescs; //, nframes;
 
 	ifp = sc->ifp;
 
-	//ndescs = 0;
+	ndescs = 0;
 	//nframes = 0;
 
 	bus_dmamap_sync(ring->desc_dma_tag, ring->desc_dma_map,
@@ -1577,7 +1577,7 @@ rt_tx_eof(struct rt_softc *sc, struct rt_softc_tx_ring *ring)
 		if (ring->desc_next == index)
 			break;
 
-	//	ndescs++;
+		ndescs++;
 
 		desc = &ring->desc[ring->desc_next];
 
