@@ -24,28 +24,18 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "opt_platform.h"
-
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
-#include <sys/conf.h>
 #include <sys/kernel.h>
-#include <sys/sysctl.h>
+#include <sys/module.h>
 #include <machine/bus.h>
-
-#include <mips/mediatek/mtk_soc.h>
-#include <mips/mediatek/mtk_sysctl.h>
 
 #include <dev/fdt/fdt_common.h>
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
 
 #include <dev/uart/uart.h>
-#include <dev/uart/uart_cpu.h>
 #include <dev/uart/uart_cpu_fdt.h>
 #include <dev/uart/uart_bus.h>
 #include <dev/uart/uart_dev_ns8250.h>
@@ -81,14 +71,14 @@ static struct uart_class uart_mtk_ns8250_class = {
 	.uc_ops = &uart_ns8250_ops,
 	.uc_range = 1, /* use hinted range */
 	.uc_rclk = 0,
-	.uc_rshift = 2
+	.uc_rshift = 2,
+	.uc_riowidth = 2
+};
+static struct ofw_compat_data compat_data[] = {
+	{"mediatek,mt6577-uart",	(uintptr_t)&uart_mtk_ns8250_class},
+	{NULL,				(uintptr_t)NULL},
 };
 
-static struct ofw_compat_data compat_data[] = {
-	{ "mtk,ns16550a",	(uintptr_t)&uart_mtk_ns8250_class },
-	{ "ns16550a",		(uintptr_t)&uart_mtk_ns8250_class },
-	{ NULL,			(uintptr_t)NULL },
-};
 UART_FDT_CLASS_AND_DEVICE(compat_data);
 
 static int
@@ -102,9 +92,7 @@ mtk_ns8250_bus_probe(struct uart_softc *sc)
 	if (ofw_bus_search_compatible(sc->sc_dev, compat_data)->ocd_data ==
 	    (uintptr_t)NULL)
 		return (ENXIO);
-        
-	sc->sc_bas.rclk = mtk_soc_get_uartclk();
-        
+
 	status = ns8250_bus_probe(sc);
 	if (status == 0)
 		device_set_desc(sc->sc_dev, "MTK UART Controller (ns16550a)");
