@@ -50,7 +50,7 @@
 #include <dev/mmc/mmcbrvar.h>
 #include <dev/mmc/mmc_fdt_helpers.h>
 
-#include <arm64/mediatek/mt_mmc.h>
+#include <arm64/mediatek/mtk_mmc.h>
 // #include <mips/mediatek/mtk_soc.h>
 // #include <mips/mediatek/mtk_sysctl.h>
 
@@ -68,11 +68,10 @@
 				MTK_MSDC_INT_SDCTO | MTK_MSDC_INT_SDACDCTO | \
 				MTK_MSDC_INT_SDDCRCERR | MTK_MSDC_INT_SDDTO)
 
-struct mt_mmc_softc {
+struct mtk_mmc_softc {
 	device_t		sc_dev;
 	clk_t			sclk;
 	clk_t			hclk;
-	clk_t			source;
 
 	int			sc_bus_busy;
 	int			sc_resid;
@@ -117,22 +116,22 @@ static struct resource_spec mtk_mmc_res_spec[] = {
 	{ -1,			0,	0 }
 };
 
-static int mt_mmc_probe(device_t);
-static int mt_mmc_attach(device_t);
-static int mt_mmc_detach(device_t);
-static int mt_mmc_setup_dma(struct mt_mmc_softc *);
-static void mt_mmc_teardown_dma(struct mt_mmc_softc *sc);
-static int mt_mmc_reset(struct mt_mmc_softc *);
+static int mtk_mmc_probe(device_t);
+static int mtk_mmc_attach(device_t);
+static int mtk_mmc_detach(device_t);
+static int mtk_mmc_setup_dma(struct mtk_mmc_softc *);
+static void mtk_mmc_teardown_dma(struct mtk_mmc_softc *sc);
+static int mtk_mmc_reset(struct mtk_mmc_softc *);
 
-static void mt_mmc_intr(void *);
-static int mt_mmc_config_clock(struct mt_mmc_softc *, uint32_t);
-static void mt_mmc_helper_cd_handler(device_t, bool);
+static void mtk_mmc_intr(void *);
+static int mtk_mmc_config_clock(struct mtk_mmc_softc *, uint32_t);
+static void mtk_mmc_helper_cd_handler(device_t, bool);
 
-static int mt_mmc_update_ios(device_t, device_t);
-static int mt_mmc_request(device_t, device_t, struct mmc_request *);
-static int mt_mmc_get_ro(device_t, device_t);
-static int mt_mmc_acquire_host(device_t, device_t);
-static int mt_mmc_release_host(device_t, device_t);
+static int mtk_mmc_update_ios(device_t, device_t);
+static int mtk_mmc_request(device_t, device_t, struct mmc_request *);
+static int mtk_mmc_get_ro(device_t, device_t);
+static int mtk_mmc_acquire_host(device_t, device_t);
+static int mtk_mmc_release_host(device_t, device_t);
 
 #define	MTK_MMC_LOCK(_sc)	mtx_lock(&(_sc)->sc_mtx)
 #define	MTK_MMC_UNLOCK(_sc)	mtx_unlock(&(_sc)->sc_mtx)
@@ -148,9 +147,9 @@ static struct ofw_compat_data compat_data[] = {
 };
 
 static int
-mt_mmc_probe(device_t dev)
+mtk_mmc_probe(device_t dev)
 {
-	struct mt_mmc_softc *sc = device_get_softc(dev);
+	struct mtk_mmc_softc *sc = device_get_softc(dev);
 
 	if (!ofw_bus_status_okay(dev))
 		return (ENXIO);
@@ -165,9 +164,9 @@ mt_mmc_probe(device_t dev)
 }
 
 static int
-mt_mmc_attach(device_t dev)
+mtk_mmc_attach(device_t dev)
 {
-	struct mt_mmc_softc *sc;
+	struct mtk_mmc_softc *sc;
 	struct sysctl_ctx_list *ctx;
 	struct sysctl_oid_list *tree;
 	uint32_t val;
@@ -184,7 +183,7 @@ mt_mmc_attach(device_t dev)
 	}
 
 	if (bus_setup_intr(dev, sc->sc_res[MTK_MMC_IRQRES],
-	    INTR_TYPE_MISC | INTR_MPSAFE, NULL, mt_mmc_intr, sc,
+	    INTR_TYPE_MISC | INTR_MPSAFE, NULL, mtk_mmc_intr, sc,
 	    &sc->sc_intrhand)) {
 		bus_release_resources(dev, mtk_mmc_res_spec, sc->sc_res);
 		device_printf(dev, "cannot setup interrupt handler\n");
@@ -208,7 +207,7 @@ mt_mmc_attach(device_t dev)
 		&sc->sc_timeout, 0, "Request timeout in seconds");
 
 	/* Setup DMA */
-	if (mt_mmc_setup_dma(sc) != 0) {
+	if (mtk_mmc_setup_dma(sc) != 0) {
 		device_printf(dev, "Couldn't setup DMA!\n");
 		goto fail;
 	}
@@ -236,7 +235,7 @@ mt_mmc_attach(device_t dev)
 	MTK_MMC_WRITE_4(sc, MTK_MSDC_CFG, val);
 
 	/* Reset controller. */
-	if (mt_mmc_reset(sc) != 0) {
+	if (mtk_mmc_reset(sc) != 0) {
 		device_printf(dev, "cannot reset the controller\n");
 		goto fail;
 	}
@@ -267,7 +266,7 @@ mt_mmc_attach(device_t dev)
 		}
 	}
 	mmc_fdt_parse(dev, 0, &sc->mmc_helper, &sc->sc_host);
-	mmc_fdt_gpio_setup(dev, 0, &sc->mmc_helper, mt_mmc_helper_cd_handler);
+	mmc_fdt_gpio_setup(dev, 0, &sc->mmc_helper, mtk_mmc_helper_cd_handler);
 	return (0);
 
 fail:
@@ -279,9 +278,9 @@ fail:
 }
 
 static int
-mt_mmc_detach(device_t dev)
+mtk_mmc_detach(device_t dev)
 {
-	struct mt_mmc_softc *sc;
+	struct mtk_mmc_softc *sc;
 	device_t d;
 
 	sc= device_get_softc(dev);
@@ -296,7 +295,7 @@ mt_mmc_detach(device_t dev)
 	MTK_MMC_UNLOCK(sc);
 		device_delete_child(sc->sc_dev, d);
 
-	mt_mmc_teardown_dma(sc);
+	mtk_mmc_teardown_dma(sc);
 
 	mtx_destroy(&sc->sc_mtx);
 
@@ -306,11 +305,11 @@ mt_mmc_detach(device_t dev)
 }
 
 static void
-mt_mmc_dma_gpd_cb(void *arg, bus_dma_segment_t *segs, int nsegs, int err)
+mtk_mmc_dma_gpd_cb(void *arg, bus_dma_segment_t *segs, int nsegs, int err)
 {
-	struct mt_mmc_softc *sc;
+	struct mtk_mmc_softc *sc;
 
-	sc = (struct mt_mmc_softc *)arg;
+	sc = (struct mtk_mmc_softc *)arg;
 	if (err) {
 		sc->sc_dma_map_err = err;
 		return;
@@ -319,11 +318,11 @@ mt_mmc_dma_gpd_cb(void *arg, bus_dma_segment_t *segs, int nsegs, int err)
 }
 
 static void
-mt_mmc_dma_bd_cb(void *arg, bus_dma_segment_t *segs, int nsegs, int err)
+mtk_mmc_dma_bd_cb(void *arg, bus_dma_segment_t *segs, int nsegs, int err)
 {
-	struct mt_mmc_softc *sc;
+	struct mtk_mmc_softc *sc;
 
-	sc = (struct mt_mmc_softc *)arg;
+	sc = (struct mtk_mmc_softc *)arg;
 	if (err) {
 		sc->sc_dma_map_err = err;
 		return;
@@ -332,7 +331,7 @@ mt_mmc_dma_bd_cb(void *arg, bus_dma_segment_t *segs, int nsegs, int err)
 }
 
 static int
-mt_mmc_setup_dma(struct mt_mmc_softc *sc)
+mtk_mmc_setup_dma(struct mtk_mmc_softc *sc)
 {
 	int dma_gpd_size, dma_bd_size;
 	int error;
@@ -362,7 +361,7 @@ mt_mmc_setup_dma(struct mt_mmc_softc *sc)
 	error = bus_dmamap_load(sc->sc_dma_gpd_tag,
 	    sc->sc_dma_gpd_map,
 	    sc->sc_dma_gpd, dma_gpd_size,
-	    mt_mmc_dma_gpd_cb, sc, 0);
+	    mtk_mmc_dma_gpd_cb, sc, 0);
 	if (error)
 		return (error);
 	if (sc->sc_dma_map_err)
@@ -393,7 +392,7 @@ mt_mmc_setup_dma(struct mt_mmc_softc *sc)
 	error = bus_dmamap_load(sc->sc_dma_bd_tag,
 	    sc->sc_dma_bd_map,
 	    sc->sc_dma_bd, dma_bd_size,
-	    mt_mmc_dma_bd_cb, sc, 0);
+	    mtk_mmc_dma_bd_cb, sc, 0);
 	if (error)
 		return (error);
 	if (sc->sc_dma_map_err)
@@ -424,7 +423,7 @@ mt_mmc_setup_dma(struct mt_mmc_softc *sc)
 }
 
 static void
-mt_mmc_teardown_dma(struct mt_mmc_softc *sc)
+mtk_mmc_teardown_dma(struct mtk_mmc_softc *sc)
 {
 	bus_dmamap_unload(sc->sc_dma_gpd_tag, sc->sc_dma_gpd_map);
 	bus_dmamem_free(sc->sc_dma_gpd_tag, sc->sc_dma_gpd, sc->sc_dma_gpd_map);
@@ -443,7 +442,7 @@ mt_mmc_teardown_dma(struct mt_mmc_softc *sc)
 }
 
 static uint8_t
-mt_mmc_chksum_calcs(uint8_t *buf, uint32_t len)
+mtk_mmc_chksum_calcs(uint8_t *buf, uint32_t len)
 {
 	uint32_t i, sum = 0;
 
@@ -454,15 +453,15 @@ mt_mmc_chksum_calcs(uint8_t *buf, uint32_t len)
 }
 
 static void
-mt_mmc_dma_cb(void *arg, bus_dma_segment_t *segs, int nsegs, int err)
+mtk_mmc_dma_cb(void *arg, bus_dma_segment_t *segs, int nsegs, int err)
 {
-	struct mt_mmc_softc *sc;
+	struct mtk_mmc_softc *sc;
 	struct mtk_mmc_dma_gpd *dma_gpd;
 	struct mtk_mmc_dma_bd *dma_bd;
 	uint32_t dma_bd_addr;
 	int i;
 
-	sc = (struct mt_mmc_softc *)arg;
+	sc = (struct mtk_mmc_softc *)arg;
 	sc->sc_dma_map_err = err;
 
 	if (err)
@@ -483,7 +482,7 @@ mt_mmc_dma_cb(void *arg, bus_dma_segment_t *segs, int nsegs, int err)
 			dma_bd[i].bd_cfg1 = 0;
 		}
 		dma_bd[i].bd_chksum = 0;	/* checksume need to clear first */
-		dma_bd[i].bd_chksum = mt_mmc_chksum_calcs(
+		dma_bd[i].bd_chksum = mtk_mmc_chksum_calcs(
 		    (uint8_t *)(&dma_bd[i]), 16);
 	}
 
@@ -494,11 +493,11 @@ mt_mmc_dma_cb(void *arg, bus_dma_segment_t *segs, int nsegs, int err)
 	    + sizeof(struct mtk_mmc_dma_gpd);
 	dma_gpd->buf_addr = sc->sc_dma_bd_addr;
 	dma_gpd->gpd_chksum = 0;	/* checksume need to clear first. */
-	dma_gpd->gpd_chksum = mt_mmc_chksum_calcs((uint8_t *)dma_gpd, 16);
+	dma_gpd->gpd_chksum = mtk_mmc_chksum_calcs((uint8_t *)dma_gpd, 16);
 }
 
 static int
-mt_mmc_prepare_dma(struct mt_mmc_softc *sc)
+mtk_mmc_prepare_dma(struct mtk_mmc_softc *sc)
 {
 	bus_dmasync_op_t sync_op;
 	int error;
@@ -509,7 +508,7 @@ mt_mmc_prepare_dma(struct mt_mmc_softc *sc)
 	if (cmd->data->len > MTK_MSC_DMA_MAX_SIZE * MTK_MMC_MAX_BD)
 		return (EFBIG);
 	error = bus_dmamap_load(sc->sc_dma_buf_tag, sc->sc_dma_buf_map,
-	    cmd->data->data, cmd->data->len, mt_mmc_dma_cb, sc,
+	    cmd->data->data, cmd->data->len, mtk_mmc_dma_cb, sc,
 	    BUS_DMA_NOWAIT);
 	if (error)
 		return (error);
@@ -541,7 +540,7 @@ mt_mmc_prepare_dma(struct mt_mmc_softc *sc)
 }
 
 static void
-mt_mmc_start_dma(struct mt_mmc_softc *sc)
+mtk_mmc_start_dma(struct mtk_mmc_softc *sc)
 {
 	/* Set the address of the first descriptor */
 	MTK_MMC_WRITE_4(sc, MTK_MSDC_DMA_SA, sc->sc_dma_gpd_addr);
@@ -550,7 +549,7 @@ mt_mmc_start_dma(struct mt_mmc_softc *sc)
 }
 
 static int
-mt_mmc_reset(struct mt_mmc_softc *sc)
+mtk_mmc_reset(struct mtk_mmc_softc *sc)
 {
 	int timeout;
 	uint32_t val;
@@ -593,7 +592,7 @@ mt_mmc_reset(struct mt_mmc_softc *sc)
 }
 
 static void
-mt_mmc_req_done(struct mt_mmc_softc *sc)
+mtk_mmc_req_done(struct mtk_mmc_softc *sc)
 {
 	struct mmc_command *cmd;
 	struct mmc_request *req;
@@ -601,7 +600,7 @@ mt_mmc_req_done(struct mt_mmc_softc *sc)
 	cmd = sc->sc_req->cmd;
 	/* Reset the in case of errors */
 	if (cmd->error != MMC_ERR_NONE)
-		mt_mmc_reset(sc);
+		mtk_mmc_reset(sc);
 
 	callout_stop(&sc->sc_timeoutc);
 
@@ -617,7 +616,7 @@ mt_mmc_req_done(struct mt_mmc_softc *sc)
 }
 
 static void
-mt_mmc_req_ok(struct mt_mmc_softc *sc)
+mtk_mmc_req_ok(struct mtk_mmc_softc *sc)
 {
 
 	struct mmc_command *cmd;
@@ -638,36 +637,36 @@ mt_mmc_req_ok(struct mt_mmc_softc *sc)
 	/* All data has been transferred ? */
 	if (cmd->data != NULL && (sc->sc_resid << 2) < cmd->data->len)
 		cmd->error = MMC_ERR_FAILED;
-	mt_mmc_req_done(sc);
+	mtk_mmc_req_done(sc);
 }
 
 static void
-mt_mmc_timeout(void *arg)
+mtk_mmc_timeout(void *arg)
 {
-	struct mt_mmc_softc *sc;
+	struct mtk_mmc_softc *sc;
 
-	sc = (struct mt_mmc_softc *)arg;
+	sc = (struct mtk_mmc_softc *)arg;
 	if (sc->sc_req != NULL) {
 		device_printf(sc->sc_dev,
 		    "controller timeout, msdc_int %#x msdc_inten %#x\n",
 		    MTK_MMC_READ_4(sc, MTK_MSDC_INT),
 		    MTK_MMC_READ_4(sc, MTK_MSDC_INTEN));
 		sc->sc_req->cmd->error = MMC_ERR_TIMEOUT;
-		mt_mmc_req_done(sc);
+		mtk_mmc_req_done(sc);
 	} else
 		device_printf(sc->sc_dev,
 		    "Spurious timeout - no active request\n");
 }
 
 static void
-mt_mmc_intr(void *arg)
+mtk_mmc_intr(void *arg)
 {
 	bus_dmasync_op_t sync_op;
-	struct mt_mmc_softc *sc;
+	struct mtk_mmc_softc *sc;
 	struct mmc_data *data;
 	uint32_t rint;
 
-	sc = (struct mt_mmc_softc *)arg;
+	sc = (struct mtk_mmc_softc *)arg;
 	MTK_MMC_LOCK(sc);
 	rint  = MTK_MMC_READ_4(sc, MTK_MSDC_INT);
 #if defined(MTK_MMC_DEBUG)
@@ -690,7 +689,7 @@ mt_mmc_intr(void *arg)
 			sc->sc_req->cmd->error = MMC_ERR_TIMEOUT;
 		else
 			sc->sc_req->cmd->error = MMC_ERR_FAILED;
-		mt_mmc_req_done(sc);
+		mtk_mmc_req_done(sc);
 		goto end;
 	}
 
@@ -698,7 +697,7 @@ mt_mmc_intr(void *arg)
 
 	/* Check for command response */
 	if (rint & MTK_MSDC_INT_SDCRDY) {
-		mt_mmc_start_dma(sc);
+		mtk_mmc_start_dma(sc);
 	}
 	/* Unmap DMA if necessary */
 	if (data != NULL && (rint & MTK_MSDC_INT_DMAXFDNE) != 0) {
@@ -715,16 +714,16 @@ mt_mmc_intr(void *arg)
 	}
 	sc->sc_intr_seen |= rint;
 	if ((sc->sc_intr_seen & sc->sc_intr_wait) == sc->sc_intr_wait)
-		mt_mmc_req_ok(sc);
+		mtk_mmc_req_ok(sc);
 end:
 	MTK_MMC_WRITE_4(sc, MTK_MSDC_INT, rint);
 	MTK_MMC_UNLOCK(sc);
 }
 
 static int
-mt_mmc_request(device_t bus, device_t child, struct mmc_request *req)
+mtk_mmc_request(device_t bus, device_t child, struct mmc_request *req)
 {
-	struct mt_mmc_softc *sc;
+	struct mtk_mmc_softc *sc;
 	struct mmc_command *cmd;
 	uint32_t iwait, cmdr;
 	int blksz, tout = 1000;
@@ -785,7 +784,7 @@ mt_mmc_request(device_t bus, device_t child, struct mmc_request *req)
 		cmdr |= blksz << MTK_SDC_CMD_LEN_SHIFT;
 		MTK_MMC_WRITE_4(sc, MTK_SDC_BLK_NUM, (cmd->data->len / blksz));
 
-		mt_mmc_prepare_dma(sc);
+		mtk_mmc_prepare_dma(sc);
 
 		iwait |= MTK_MSDC_INT_SDXFCPL;
 		iwait |= MTK_MSDC_INT_DMAXFDNE;
@@ -819,7 +818,7 @@ mt_mmc_request(device_t bus, device_t child, struct mmc_request *req)
 
 	if (tout < 0) {
 		cmd->error = ETIMEDOUT;
-		mt_mmc_timeout(sc);
+		mtk_mmc_timeout(sc);
 		MTK_MMC_UNLOCK(sc);
 		return (0);
 	}
@@ -839,16 +838,16 @@ mt_mmc_request(device_t bus, device_t child, struct mmc_request *req)
 	MTK_MMC_WRITE_4(sc, MTK_SDC_CMD, cmdr);
 
 	callout_reset(&sc->sc_timeoutc, sc->sc_timeout * hz,
-	    mt_mmc_timeout, sc);
+	    mtk_mmc_timeout, sc);
 	MTK_MMC_UNLOCK(sc);
 
 	return (0);
 }
 
 static void
-mt_mmc_helper_cd_handler(device_t dev, bool present)
+mtk_mmc_helper_cd_handler(device_t dev, bool present)
 {
-//	struct mt_mmc_softc *sc;
+//	struct mtk_mmc_softc *sc;
 //
 //	sc = device_get_softc(dev);
 //	MTK_MMC_LOCK(sc);
@@ -875,10 +874,10 @@ mt_mmc_helper_cd_handler(device_t dev, bool present)
 }
 
 static int
-mt_mmc_read_ivar(device_t bus, device_t child, int which,
+mtk_mmc_read_ivar(device_t bus, device_t child, int which,
     uintptr_t *result)
 {
-	struct mt_mmc_softc *sc;
+	struct mtk_mmc_softc *sc;
 
 	sc = device_get_softc(bus);
 	switch (which) {
@@ -936,10 +935,10 @@ mt_mmc_read_ivar(device_t bus, device_t child, int which,
 }
 
 static int
-mt_mmc_write_ivar(device_t bus, device_t child, int which,
+mtk_mmc_write_ivar(device_t bus, device_t child, int which,
     uintptr_t value)
 {
-	struct mt_mmc_softc *sc;
+	struct mtk_mmc_softc *sc;
 
 	sc = device_get_softc(bus);
 	switch (which) {
@@ -988,8 +987,9 @@ mt_mmc_write_ivar(device_t bus, device_t child, int which,
 
 /* */
 static int
-mt_mmc_config_clock(struct mt_mmc_softc *sc, uint32_t freq)
+mtk_mmc_config_clock(struct mtk_mmc_softc *sc, uint32_t freq)
 {
+
 	uint32_t mclk;
 	uint64_t hclk;
 	uint64_t sclk;
@@ -1063,9 +1063,9 @@ mt_mmc_config_clock(struct mt_mmc_softc *sc, uint32_t freq)
 }
 
 static int
-mt_mmc_switch_vccq(device_t bus, device_t child)
+mtk_mmc_switch_vccq(device_t bus, device_t child)
 {
-	struct mt_mmc_softc *sc;
+	struct mtk_mmc_softc *sc;
 	int uvolt, err;
 
 	sc = device_get_softc(bus);
@@ -1097,9 +1097,9 @@ mt_mmc_switch_vccq(device_t bus, device_t child)
 }
 
 static int
-mt_mmc_update_ios(device_t bus, device_t child)
+mtk_mmc_update_ios(device_t bus, device_t child)
 {
-	struct mt_mmc_softc *sc;
+	struct mtk_mmc_softc *sc;
 	struct mmc_ios *ios;
 	uint32_t buswd;
 	uint32_t val;
@@ -1149,16 +1149,16 @@ mt_mmc_update_ios(device_t bus, device_t child)
 
 	if (ios->clock && ios->clock != sc->sc_clock) {
 		sc->sc_clock = ios->clock;
-		mt_mmc_config_clock(sc, ios->clock);
+		mtk_mmc_config_clock(sc, ios->clock);
 	}
 
 	return (0);
 }
 
 static int
-mt_mmc_get_ro(device_t bus, device_t child)
+mtk_mmc_get_ro(device_t bus, device_t child)
 {
-//	struct mt_mmc_softc *sc;
+//	struct mtk_mmc_softc *sc;
 
 //	sc = device_get_softc(bus);
 
@@ -1167,9 +1167,9 @@ mt_mmc_get_ro(device_t bus, device_t child)
 }
 
 static int
-mt_mmc_acquire_host(device_t bus, device_t child)
+mtk_mmc_acquire_host(device_t bus, device_t child)
 {
-	struct mt_mmc_softc *sc;
+	struct mtk_mmc_softc *sc;
 	int error;
 
 	sc = device_get_softc(bus);
@@ -1188,9 +1188,9 @@ mt_mmc_acquire_host(device_t bus, device_t child)
 }
 
 static int
-mt_mmc_release_host(device_t bus, device_t child)
+mtk_mmc_release_host(device_t bus, device_t child)
 {
-	struct mt_mmc_softc *sc;
+	struct mtk_mmc_softc *sc;
 
 	sc = device_get_softc(bus);
 	MTK_MMC_LOCK(sc);
@@ -1201,29 +1201,33 @@ mt_mmc_release_host(device_t bus, device_t child)
 	return (0);
 }
 
-static device_method_t mt_mmc_methods[] = {
+static device_method_t mtk_mmc_methods[] = {
 	/* Device interface */
-	DEVMETHOD(device_probe,		mt_mmc_probe),
-	DEVMETHOD(device_attach,	mt_mmc_attach),
-	DEVMETHOD(device_detach,	mt_mmc_detach),
+	DEVMETHOD(device_probe,		mtk_mmc_probe),
+	DEVMETHOD(device_attach,	mtk_mmc_attach),
+	DEVMETHOD(device_detach,	mtk_mmc_detach),
 
 	/* Bus interface */
-	DEVMETHOD(bus_read_ivar,	mt_mmc_read_ivar),
-	DEVMETHOD(bus_write_ivar,	mt_mmc_write_ivar),
+	DEVMETHOD(bus_read_ivar,	mtk_mmc_read_ivar),
+	DEVMETHOD(bus_write_ivar,	mtk_mmc_write_ivar),
 	DEVMETHOD(bus_add_child,	bus_generic_add_child),
 
 	/* MMC bridge interface */
-	DEVMETHOD(mmcbr_update_ios,	mt_mmc_update_ios),
-	DEVMETHOD(mmcbr_request,	mt_mmc_request),
-	DEVMETHOD(mmcbr_get_ro,		mt_mmc_get_ro),
-	DEVMETHOD(mmcbr_switch_vccq,	mt_mmc_switch_vccq),
-	DEVMETHOD(mmcbr_acquire_host,	mt_mmc_acquire_host),
-	DEVMETHOD(mmcbr_release_host,	mt_mmc_release_host),
+	DEVMETHOD(mmcbr_update_ios,	mtk_mmc_update_ios),
+	DEVMETHOD(mmcbr_request,	mtk_mmc_request),
+	DEVMETHOD(mmcbr_get_ro,		mtk_mmc_get_ro),
+	DEVMETHOD(mmcbr_switch_vccq,	mtk_mmc_switch_vccq),
+	DEVMETHOD(mmcbr_acquire_host,	mtk_mmc_acquire_host),
+	DEVMETHOD(mmcbr_release_host,	mtk_mmc_release_host),
 
 	DEVMETHOD_END
 };
 
-static DEFINE_CLASS_0(mt_mmc, mt_mmc_driver, mt_mmc_methods,
-sizeof(struct mt_mmc_softc));
-DRIVER_MODULE(mt_mmc, simplebus, mt_mmc_driver, NULL, NULL);
-MMC_DECLARE_BRIDGE(mt_mmc);
+static driver_t mtk_mmc_driver = {
+	"mtkmmc",
+	mtk_mmc_methods,
+	sizeof(struct mtk_mmc_softc),
+};
+
+DRIVER_MODULE(mtkmmc, simplebus, mtk_mmc_driver, NULL, NULL);
+MMC_DECLARE_BRIDGE(mtkmmc);

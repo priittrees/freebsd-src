@@ -25,8 +25,8 @@
  * $FreeBSD:
  */
 
-#ifndef __MT_MMC_H__
-#define __MT_MMC_H__
+#ifndef __MTK_MMC_H__
+#define __MTK_MMC_H__
 
 /* MediaTek SD driver Register */
 #define	MTK_MSDC_CFG		(0x0)
