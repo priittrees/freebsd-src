@@ -1003,6 +1003,7 @@ mtk_gpio_attach(device_t dev)
 	clk_t clk;
 //	hwreset_t rst = NULL;
 	int off, err, clkret;
+	int i;
 
 	sc = device_get_softc(dev);
 	sc->sc_dev = dev;
@@ -1049,6 +1050,14 @@ mtk_gpio_attach(device_t dev)
 		}
 	}
 #endif
+	/* Hack mt7622. Set all pins to GPIO modes except UART and Ethernet */
+	device_printf(dev, "Set pins to GPIO mode except UART0 and Ethernet\n");
+	MTK_BASE_WRITE_4(sc, 0x300, 0x01110100);
+	for(i = 1; i <= 0xa; i++)
+	{
+		MTK_BASE_WRITE_4(sc, ((i * 0x10) + 0x300 ), 0x11111111);
+	}
+
 	TAILQ_INIT(&sc->clk_list);
 	for (off = 0, clkret = 0; clkret == 0; off++) {
 		clkret = clk_get_by_ofw_index(dev, 0, off, &clk);
