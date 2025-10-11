@@ -795,18 +795,14 @@ mtk_gpio_map_gpios(device_t bus, phandle_t dev, phandle_t gparent, int gcells,
 {
 	printf("%s\n", __func__);
 	struct mtk_gpio_softc *sc;
-	int i;
 
 	sc = device_get_softc(bus);
 
-	/* The GPIO pins are mapped as: <gpio-phandle bank pin flags>. */
-	for (i = 0; i < sc->conf->padconf->npins; i++)
-		if (
-		    sc->conf->padconf->pins_names[i].number == gpios[1]) {
-			*pin = i;
-			break;
-		}
-	*flags = gpios[gcells - 1];
+	if (gpios[0] >= sc->conf->padconf->npins)
+		return (EINVAL);
+
+	*pin = gpios[0];
+	*flags = gpios[1];
 
 	return (0);
 }
