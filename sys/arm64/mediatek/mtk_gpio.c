@@ -55,7 +55,6 @@
 
 #include <dev/syscon/syscon.h>
 
-#include "syscon_if.h"
 #include "pic_if.h"
 #include "gpio_if.h"
 
@@ -68,10 +67,8 @@
 #define	MTK_GPIO_DEFAULT_CAPS	(GPIO_PIN_INPUT | GPIO_PIN_OUTPUT |	\
 	  GPIO_PIN_PULLUP | GPIO_PIN_PULLDOWN);
 
-#if 0
 #define	MTK_GPIO_INTR_CAPS	(GPIO_INTR_LEVEL_LOW | GPIO_INTR_LEVEL_HIGH |	\
 	  GPIO_INTR_EDGE_RISING | GPIO_INTR_EDGE_FALLING | GPIO_INTR_EDGE_BOTH)
-#endif
 
 #define	MTK_GPIO_NONE		0
 #define	MTK_GPIO_PULLUP		1
@@ -79,6 +76,8 @@
 
 #define	MTK_GPIO_INPUT		0
 #define	MTK_GPIO_OUTPUT		1
+
+
 
 struct mtk_gpio_conf {
 	struct mtk_padconf *padconf;
@@ -108,7 +107,8 @@ struct gpio_irqsrc {
 	uint32_t		intnum;
 	uint32_t		intfunc;
 	uint32_t		oldfunc;
-	bool			enabled;
+
+	bool			edge_both;
 };
 
 #define	MTK_BASE_MEMRES		0
@@ -138,9 +138,9 @@ static struct resource_spec mtk_gpio_res_spec[] = {
 	{ -1,			0,	0 }
 };
 
-#define	MTK_BASE_READ_4(_sc, _reg)					\
+#define	MTK_GPIO_READ_4(_sc, _reg)					\
 	bus_read_4((_sc)->sc_res[MTK_BASE_MEMRES], _reg)
-#define MTK_BASE_WRITE_4(_sc, _reg, _value)				\
+#define MTK_GPIO_WRITE_4(_sc, _reg, _value)				\
 	bus_write_4((_sc)->sc_res[MTK_BASE_MEMRES], _reg, _value)
 #define	MTK_EINT_READ_4(_sc, _reg)					\
 	bus_read_4((_sc)->sc_res[MTK_EINT_MEMRES], _reg)
@@ -149,6 +149,22 @@ static struct resource_spec mtk_gpio_res_spec[] = {
 #define	MTK_GPIO_LOCK(_sc)		mtx_lock_spin(&(_sc)->sc_mtx)
 #define	MTK_GPIO_UNLOCK(_sc)		mtx_unlock_spin(&(_sc)->sc_mtx)
 #define	MTK_GPIO_LOCK_ASSERT(_sc)	mtx_assert(&(_sc)->sc_mtx, MA_OWNED)
+
+#define	MTK_EINT_STA(_irq)		(((_irq >> 5) << 2) + 0x00)
+#define	MTK_EINT_ACK(_irq)		(((_irq >> 5) << 2) + 0x40)
+#define	MTK_EINT_MASK(_irq)		(((_irq >> 5) << 2) + 0x80)
+#define	MTK_EINT_MASK_SET(_irq)		(((_irq >> 5) << 2) + 0xc0)
+#define	MTK_EINT_MASK_CLR(_irq)		(((_irq >> 5) << 2) + 0x100)
+#define MTK_EINT_SENS(_irq)		(((_irq >> 5) << 2) + 0x140)
+#define	MTK_EINT_SENS_SET(_irq)		(((_irq >> 5) << 2) + 0x180)
+#define	MTK_EINT_SENS_CLR(_irq)		(((_irq >> 5) << 2) + 0x1c0)
+#define MTK_EINT_SOFT(_irq)		(((_irq >> 5) << 2) + 0x200)
+#define MTK_EINT_SOFT_SET(_irq)		(((_irq >> 5) << 2) + 0x240)
+#define MTK_EINT_SOFT_CLK(_irq)		(((_irq >> 5) << 2) + 0x280)
+#define MTK_EINT_POL(_irq)		(((_irq >> 5) << 2) + 0x300)
+#define	MTK_EINT_POL_SET(_irq)		(((_irq >> 5) << 2) + 0x340)
+#define	MTK_EINT_POL_CLR(_irq)		(((_irq >> 5) << 2) + 0x380)
+#define MTK_EINT_DO_EN(_irq)		(((_irq >> 5) << 2) + 0x400)
 
 static char *mtk_gpio_parse_function(phandle_t node);
 static const char **mtk_gpio_parse_groups(phandle_t node, int *groups_nb);
@@ -233,7 +249,7 @@ mtk_gpio_get_function(struct mtk_gpio_softc *sc, uint32_t pin)
 		return (0);
 
 	mtk_field_lookup(sc, PINCTRL_PIN_REG_DIR, pin, &offset, &mask, &bitpos);
-	reg_data = MTK_BASE_READ_4(sc, offset);
+	reg_data = MTK_GPIO_READ_4(sc, offset);
 	dprintf("pin %i offset 0x%08x reg 0x%08x\n", pin, offset, reg_data);
 
 	return ((reg_data & (mask << bitpos)) ?
@@ -256,12 +272,12 @@ mtk_gpio_set_function(struct mtk_gpio_softc *sc, uint32_t pin, uint32_t f)
 	MTK_GPIO_LOCK_ASSERT(sc);
 
 	mtk_field_lookup(sc, PINCTRL_PIN_REG_DIR, pin, &offset, &mask, &bitpos);
-        reg_data = MTK_BASE_READ_4(sc, offset);
+        reg_data = MTK_GPIO_READ_4(sc, offset);
 	dprintf("pin %i offset 0x%08x reg before set 0x%08x\n", pin, offset, reg_data);
 	reg_data &= ~(mask<< bitpos);
 	reg_data |= (f << bitpos);
 	dprintf("pin %i offset 0x%08x reg set values 0x%08x\n", pin, offset, reg_data);
-	MTK_BASE_WRITE_4(sc, offset, reg_data);
+	MTK_GPIO_WRITE_4(sc, offset, reg_data);
 
 	return (0);
 }
@@ -279,12 +295,12 @@ mtk_gpio_get_pud(struct mtk_gpio_softc *sc, uint32_t pin)
 	MTK_GPIO_LOCK_ASSERT(sc);
 
 	mtk_field_lookup(sc, PINCTRL_PIN_REG_PD, pin, &offset, &mask, &bitpos);
-	reg_data = MTK_BASE_READ_4(sc, offset);
+	reg_data = MTK_GPIO_READ_4(sc, offset);
 	dprintf("pd pin %i offset 0x%08x reg 0x%08x\n", pin, offset, reg_data);
 	pd  = (reg_data & (mask << bitpos)) ? 1 : 0;
 
 	mtk_field_lookup(sc, PINCTRL_PIN_REG_PU, pin, &offset, &mask, &bitpos);
-	reg_data = MTK_BASE_READ_4(sc, offset);
+	reg_data = MTK_GPIO_READ_4(sc, offset);
 	dprintf("pu pin %i offset 0x%08x reg 0x%08x\n", pin, offset, reg_data);
 	pu = (reg_data & (mask << bitpos)) ? 1 : 0;
 
@@ -327,20 +343,20 @@ mtk_gpio_set_pud(struct mtk_gpio_softc *sc, uint32_t pin, uint32_t state)
 	}
 
 	mtk_field_lookup(sc, PINCTRL_PIN_REG_PU, pin, &offset, &mask, &bitpos);
-	reg_data = MTK_BASE_READ_4(sc, offset);
+	reg_data = MTK_GPIO_READ_4(sc, offset);
 	dprintf("pu pin %i offset 0x%08x reg before set 0x%08x\n", pin, offset, reg_data);
 	reg_data &= ~(mask << bitpos);
 	reg_data |= (pu << bitpos);
 	dprintf("pu pin %i offset 0x%08x reg set values 0x%08x\n", pin, offset, reg_data);
-	MTK_BASE_WRITE_4(sc, offset, reg_data);
+	MTK_GPIO_WRITE_4(sc, offset, reg_data);
 
 	mtk_field_lookup(sc, PINCTRL_PIN_REG_PD, pin, &offset, &mask, &bitpos);
 	dprintf("pd pin %i offset 0x%08x reg before set 0x%08x\n", pin, offset, reg_data);
-        reg_data = MTK_BASE_READ_4(sc, offset);
+        reg_data = MTK_GPIO_READ_4(sc, offset);
 	reg_data &= ~(mask << bitpos);
 	reg_data |= (pd << bitpos);
 	dprintf("pd pin %i offset 0x%08x reg set values 0x%08x\n", pin, offset, reg_data);
-	MTK_BASE_WRITE_4(sc, offset, reg_data);
+	MTK_GPIO_WRITE_4(sc, offset, reg_data);
 }
 
 //TODO
@@ -364,13 +380,13 @@ mtk_gpio_get_drv(struct mtk_gpio_softc *sc, uint32_t pin)
 	MTK_GPIO_LOCK_ASSERT(sc);
 
 	mtk_field_lookup(sc, PINCTRL_PIN_REG_E4, pin, &offset, &mask, &bitpos);
-        reg_data = MTK_BASE_READ_4(sc, offset);
+        reg_data = MTK_GPIO_READ_4(sc, offset);
         e4 = ((reg_data >> bitpos) & mask);
 	dprintf("e4 pin %i offset 0x%08x reg 0x%08x\n", pin, offset, reg_data);
 	printf ("%s e4 val 0x%x\n", __func__, e4);
 
 	mtk_field_lookup(sc, PINCTRL_PIN_REG_E8, pin, &offset, &mask, &bitpos);
-        reg_data = MTK_BASE_READ_4(sc, offset);
+        reg_data = MTK_GPIO_READ_4(sc, offset);
         e8 = ((reg_data >> bitpos) & mask);
 	dprintf("e8 pin %i offset 0x%08x reg 0x%08x\n", pin, offset, reg_data);
 	printf ("%s e8 val 0x%x\n", __func__, e8);
@@ -419,22 +435,22 @@ mtk_gpio_set_drv(struct mtk_gpio_softc *sc, uint32_t pin, uint32_t drive)
 	}
 
 	mtk_field_lookup(sc, PINCTRL_PIN_REG_E4, pin, &offset, &mask, &bitpos);
-        reg_data = MTK_BASE_READ_4(sc, offset);
+        reg_data = MTK_GPIO_READ_4(sc, offset);
 	dprintf("e4 pin %i offset 0x%08x reg before set 0x%08x\n", pin, offset, reg_data);
 	printf ("%s e4 val 0x%x\n", __func__, (reg_data >> bitpos) & mask);
         reg_data &= ~(mask << bitpos);
         reg_data |= (e4 << bitpos);
 	dprintf("e4 pin %i offset 0x%08x reg set values 0x%08x\n", pin, offset, reg_data);
-        MTK_BASE_WRITE_4(sc, offset, reg_data);
+        MTK_GPIO_WRITE_4(sc, offset, reg_data);
 
 	mtk_field_lookup(sc, PINCTRL_PIN_REG_E8, pin, &offset, &mask, &bitpos);
 	dprintf("e8 pin %i offset 0x%08x reg before set 0x%08x\n", pin, offset, reg_data);
-        reg_data = MTK_BASE_READ_4(sc, offset);
+        reg_data = MTK_GPIO_READ_4(sc, offset);
 	printf ("%s e8 val 0x%x\n", __func__, (reg_data >> bitpos) & mask);
         reg_data &= ~(mask << bitpos);
         reg_data |= (e8 << bitpos);
 	dprintf("e8 pin %i offset 0x%08x reg set values 0x%08x\n", pin, offset, reg_data);
-        MTK_BASE_WRITE_4(sc, offset, reg_data);
+        MTK_GPIO_WRITE_4(sc, offset, reg_data);
 }
 
 static int
@@ -518,6 +534,7 @@ mtk_gpio_pin_getcaps(device_t dev, uint32_t pin, uint32_t *caps)
 		return (EINVAL);
 
 	*caps = MTK_GPIO_DEFAULT_CAPS;
+	*caps |= MTK_GPIO_INTR_CAPS;
 
 	return (0);
 }
@@ -612,7 +629,7 @@ mtk_gpio_pin_set_locked(struct mtk_gpio_softc *sc, uint32_t pin,
 		return (EINVAL);
 
 	mtk_field_lookup(sc, PINCTRL_PIN_REG_DO, pin, &offset, &mask, &bitpos);
-	reg_data = MTK_BASE_READ_4(sc, offset);
+	reg_data = MTK_GPIO_READ_4(sc, offset);
 	dprintf("do pin %i offset 0x%08x reg before set 0x%08x\n", pin, offset, reg_data);
 
 	if (value)
@@ -621,7 +638,7 @@ mtk_gpio_pin_set_locked(struct mtk_gpio_softc *sc, uint32_t pin,
 		reg_data &= ~(1 << bitpos);
 
 	dprintf("do pin %i offset 0x%08x reg set values 0x%08x\n", pin, offset, reg_data);
-	MTK_BASE_WRITE_4(sc, offset, reg_data);
+	MTK_GPIO_WRITE_4(sc, offset, reg_data);
 
 	return (0);
 }
@@ -662,7 +679,7 @@ mtk_gpio_pin_get_locked(struct mtk_gpio_softc *sc,uint32_t pin,
 	if (dir == MTK_GPIO_OUTPUT) {
 		mtk_field_lookup(sc, PINCTRL_PIN_REG_DO,
 		    pin, &offset, &mask, &bitpos);
-		reg_data = MTK_BASE_READ_4(sc, offset);
+		reg_data = MTK_GPIO_READ_4(sc, offset);
 		if (pin != 1) // cleaning the MMC passage.
 		dprintf("do pin %i offset 0x%08x reg 0x%08x\n",
 		    pin, offset, reg_data);
@@ -671,7 +688,7 @@ mtk_gpio_pin_get_locked(struct mtk_gpio_softc *sc,uint32_t pin,
 	else {
 		mtk_field_lookup(sc, PINCTRL_PIN_REG_DI,
 		    pin, &offset, &mask, &bitpos);
-		reg_data = MTK_BASE_READ_4(sc, offset);
+		reg_data = MTK_GPIO_READ_4(sc, offset);
 		if (pin != 1) // cleaning the MMC passage.
 		dprintf("di pin %i offset 0x%08x reg 0x%08x\n",
 		    pin, offset, reg_data);
@@ -775,7 +792,7 @@ mtk_gpio_pin_toggle(device_t dev, uint32_t pin)
 
 	MTK_GPIO_LOCK(sc);
 	mtk_field_lookup(sc, PINCTRL_PIN_REG_DO, pin, &offset, &mask, &bitpos);
-	reg_data = MTK_BASE_READ_4(sc, offset);
+	reg_data = MTK_GPIO_READ_4(sc, offset);
 	dprintf("do pin %i offset 0x%08x reg before set 0x%08x\n", pin, offset, reg_data);
 	if (reg_data & (1 << bitpos))
 		reg_data &= ~(1 << pin);
@@ -783,7 +800,7 @@ mtk_gpio_pin_toggle(device_t dev, uint32_t pin)
 		reg_data |= (1 << pin);
 
 	dprintf("do pin %i offset 0x%08x reg set values 0x%08x\n", pin, offset, reg_data);
-	MTK_BASE_WRITE_4(sc, offset, reg_data);
+	MTK_GPIO_WRITE_4(sc, offset, reg_data);
 	MTK_GPIO_UNLOCK(sc);
 
 	return (0);
@@ -793,7 +810,7 @@ static int
 mtk_gpio_map_gpios(device_t bus, phandle_t dev, phandle_t gparent, int gcells,
     pcell_t *gpios, uint32_t *pin, uint32_t *flags)
 {
-	printf("%s\n", __func__);
+	// printf("%s\n", __func__);
 	struct mtk_gpio_softc *sc;
 
 	sc = device_get_softc(bus);
@@ -858,14 +875,14 @@ mtk_gpio_set_mode(device_t dev, const char *group)
 		pin = pins[i];
 		mode = groups[i];
 		mtk_field_lookup(sc, PINCTRL_PIN_REG_MODE, pin, &offset, &mask, &bitpos);
-		reg_data = MTK_BASE_READ_4(sc, offset);
+		reg_data = MTK_GPIO_READ_4(sc, offset);
 		val = (reg_data >> bitpos) & mask;
 		if (bootverbose)
 			printf ("before pin %02i bit 0x%02x reg 0x%04x reg_data 0x%08x val 0x%02x\n",
 			    pin, bitpos, offset, reg_data, val);
 		reg_data &= ~(mask << bitpos);
 		reg_data |= (mode & mask) << bitpos;
-		MTK_BASE_WRITE_4(sc, offset, reg_data);
+		MTK_GPIO_WRITE_4(sc, offset, reg_data);
 		MTK_GPIO_UNLOCK(sc);
 		if (bootverbose)
 			printf ("after  pin %02i bit 0x%02x reg 0x%04x reg_data 0x%08x val 0x%02x\n",
@@ -1052,10 +1069,10 @@ mtk_gpio_attach(device_t dev)
 #endif
 	/* Hack mt7622. Set all pins to GPIO modes except UART and Ethernet */
 	device_printf(dev, "Set pins to GPIO mode except UART0 and Ethernet\n");
-	MTK_BASE_WRITE_4(sc, 0x300, 0x01110100);
+	MTK_GPIO_WRITE_4(sc, 0x300, 0x01110100);
 	for(i = 1; i <= 0xa; i++)
 	{
-		MTK_BASE_WRITE_4(sc, ((i * 0x10) + 0x300 ), 0x11111111);
+		MTK_GPIO_WRITE_4(sc, ((i * 0x10) + 0x300 ), 0x11111111);
 	}
 
 	TAILQ_INIT(&sc->clk_list);
@@ -1132,52 +1149,141 @@ mtk_gpio_detach(device_t dev)
 	return (EBUSY);
 }
 
-static void
-mtk_gpio_intr(void *arg)
-{
-	struct mtk_gpio_softc *sc;
-
-	sc = (struct mtk_gpio_softc *)arg;
-
-	MTK_GPIO_LOCK(sc);
-	printf("%s vau. hello world\n", __func__);
-	for (int i = 0; i < 6; i++) {
-		printf("%s enit stat0 val 0x%x\n",
-		    __func__, MTK_EINT_READ_4(sc, i * 0x4));
-	}
-	MTK_GPIO_UNLOCK(sc);
-}
-
 /*
  * Interrupts support
  */
 
+/* The device does not directly support both edges. 
+ * If the polarity of the pin changes, the EINT_POL 
+ * value must be changed. There is a risk of losing
+ * a fast polarity change because the Software
+ * Interrupt is not implemented.
+ */
+
+static void
+mtk_gpio_intr(void *arg)
+{
+	struct mtk_gpio_softc *sc;
+	struct intr_irqsrc *isrc;
+	uint32_t val;
+	uint32_t mask;
+	u_int irq;
+
+	sc = (struct mtk_gpio_softc *)arg;
+
+	MTK_GPIO_LOCK(sc);
+
+	for (irq = 0; irq < 103; irq++) {
+		val = MTK_EINT_READ_4(sc, MTK_EINT_STA(irq));
+		mask = 1U << irq;
+
+		if ((mask & val) == 0)
+			continue;
+		
+		// device_printf(sc->sc_dev, "%s interrupt %i\n", __func__,  irq);
+
+		isrc = &sc->gpio_pic_irqsrc[irq].isrc;
+		if (intr_isrc_dispatch(isrc, curthread->td_intr_frame) != 0) {
+			mtk_gpio_pic_disable_intr_locked(sc, isrc);
+			mtk_gpio_pic_post_filter(sc->sc_dev, isrc);
+			device_printf(sc->sc_dev, "Stray irq %u disabled\n",
+			    irq);
+		}
+
+	}
+	MTK_GPIO_UNLOCK(sc);
+}
+
 static int
 mtk_gpio_register_isrcs(struct mtk_gpio_softc *sc)
 {
-	printf("%s\n", __func__);
+	const char *name;
+	int nirqs;
+	int pin;
+	int err;
 
+	name = device_get_nameunit(sc->sc_dev);
+
+//TODO  do a detection to find eint ports.
+	nirqs = sc->conf->padconf->npins;
+
+	sc->gpio_pic_irqsrc = malloc(sizeof(*sc->gpio_pic_irqsrc) * nirqs,
+	    M_DEVBUF, M_WAITOK | M_ZERO);
+
+	for (nirqs = 0, pin = 0; pin < sc->conf->padconf->npins; pin++) {
+		sc->gpio_pic_irqsrc[nirqs].pin = pin;
+		sc->gpio_pic_irqsrc[nirqs].irq = nirqs;
+		sc->gpio_pic_irqsrc[nirqs].mode = GPIO_INTR_CONFORM;
+
+		err = intr_isrc_register(&sc->gpio_pic_irqsrc[nirqs].isrc,
+				sc->sc_dev, 0, "%s,%u", name, nirqs);
+
+		if (err) {
+			device_printf(sc->sc_dev,
+			     "intr_isrs_register failed for irq %d\n", nirqs);
+		}
+
+		MTK_EINT_WRITE_4(sc, MTK_EINT_MASK_SET(nirqs),
+		    (1U << (nirqs & 0x1f)));
+
+		nirqs++;
+	}
+
+	sc->nirqs = nirqs;
 	return (0);
 }
 
 static void
 mtk_gpio_pic_disable_intr_locked(struct mtk_gpio_softc *sc, struct intr_irqsrc *isrc)
 {
-	printf("%s\n", __func__);
+	u_int irq;
+	uint32_t mask;
 
+	MTK_GPIO_LOCK_ASSERT(sc);
+	irq = ((struct gpio_irqsrc *)isrc)->irq;
+	mask = 1U << (irq & 0x1f);
+	if (sc->gpio_pic_irqsrc[irq].edge_both) {
+		MTK_EINT_WRITE_4(sc, MTK_EINT_SOFT_CLK(irq), mask);	
+	}
+	MTK_EINT_WRITE_4(sc, MTK_EINT_MASK_SET(irq), mask);
 }
 
 static void
 mtk_gpio_pic_disable_intr(device_t dev, struct intr_irqsrc *isrc)
 {
-	printf("%s\n", __func__);
+	struct mtk_gpio_softc *sc;
+
+	sc = device_get_softc(dev);
+
+	MTK_GPIO_LOCK(sc);
+	mtk_gpio_pic_disable_intr_locked(sc, isrc);
+	MTK_GPIO_UNLOCK(sc);
 
 }
 
 static void
 mtk_gpio_pic_enable_intr(device_t dev, struct intr_irqsrc *isrc)
 {
-	printf("%s\n", __func__);
+	struct mtk_gpio_softc *sc;
+	u_int irq;
+	uint32_t mask;
+	unsigned int pinval = 0;
+
+	sc = device_get_softc(dev);
+	irq = ((struct gpio_irqsrc *)isrc)->irq;
+	mask = 1U << (irq & 0x1f);
+
+	MTK_GPIO_LOCK(sc);
+        if (sc->gpio_pic_irqsrc[irq].edge_both) {
+                mtk_gpio_pin_get_locked(sc, irq, &pinval);
+                // printf("%s up_down %u \n", __func__, pinval);
+                if (pinval == 1 )
+                        MTK_EINT_WRITE_4(sc, MTK_EINT_POL_CLR(irq), mask);
+                else
+                        MTK_EINT_WRITE_4(sc, MTK_EINT_POL_SET(irq), mask);
+        }
+	MTK_EINT_WRITE_4(sc, MTK_EINT_MASK_CLR(irq), mask);
+	MTK_GPIO_UNLOCK(sc);
 
 }
 
@@ -1185,7 +1291,37 @@ static int
 mtk_gpio_pic_map_gpio(struct mtk_gpio_softc *sc, struct intr_map_data_gpio *dag,
     u_int *irqp, u_int *mode)
 {
-	printf("%s\n", __func__);
+	u_int irq;
+	int pin;
+	
+	irq = dag->gpio_pin_num;
+
+	for (pin = 0; pin < sc->nirqs; pin++)
+		if (sc->gpio_pic_irqsrc[pin].pin == irq)
+			break;
+
+	if (pin >= sc->nirqs) {
+		device_printf(sc->sc_dev, "Invalid interrupt number %u\n", irq);
+		return (EINVAL);
+	}
+
+	switch (dag->gpio_intr_mode) {
+	case GPIO_INTR_LEVEL_LOW:
+	case GPIO_INTR_LEVEL_HIGH:
+	case GPIO_INTR_EDGE_RISING:
+	case GPIO_INTR_EDGE_FALLING:
+	case GPIO_INTR_EDGE_BOTH:
+		break;
+	default:
+		device_printf(sc->sc_dev, "Unsupported interrupt mode 0x%8x\n",
+		    dag->gpio_intr_mode);
+		return (EINVAL);
+	}
+
+	*irqp = pin;
+	if (mode != NULL)
+		*mode = dag->gpio_intr_mode;
+ 
 	return (0);
 }
 
@@ -1193,7 +1329,24 @@ static int
 mtk_gpio_pic_map_intr(device_t dev, struct intr_map_data *data,
     struct intr_irqsrc **isrcp)
 {
-	printf("%s\n", __func__);
+	struct mtk_gpio_softc *sc;
+	u_int irq;
+	int err;
+
+	sc = device_get_softc(dev);
+	switch (data->type) {
+	case INTR_MAP_DATA_GPIO:
+		err = mtk_gpio_pic_map_gpio(sc,
+		    (struct intr_map_data_gpio *)data,
+		  &irq, NULL);
+		break;
+	default:
+		return (ENOTSUP);
+	};
+
+	if (err == 0)
+		*isrcp = &sc->gpio_pic_irqsrc[irq].isrc;
+
 	return (0);
 }
 
@@ -1201,8 +1354,67 @@ static int
 mtk_gpio_pic_setup_intr(device_t dev, struct intr_irqsrc *isrc,
     struct resource *res, struct intr_map_data *data)
 {
+	struct mtk_gpio_softc *sc;
+	uint32_t mask, val;
+	u_int irq, mode;
+	int err;
 
-	printf("%s\n", __func__);
+	sc = device_get_softc(dev);
+
+	err = 0;
+	switch (data->type) {
+	case INTR_MAP_DATA_GPIO:
+		err = mtk_gpio_pic_map_gpio(sc,
+		    (struct intr_map_data_gpio *)data,
+		  &irq, &mode);
+		if (err != 0)
+			return (err);
+		break;
+	default:
+		return (ENOTSUP);
+	};
+
+	mask = 1U << (irq & 0x1f);
+
+	MTK_GPIO_LOCK(sc);
+	switch (mode) {
+	case GPIO_INTR_LEVEL_LOW:
+		sc->gpio_pic_irqsrc[irq].edge_both = false;
+		MTK_EINT_WRITE_4(sc, MTK_EINT_POL_CLR(irq), mask);
+		MTK_EINT_WRITE_4(sc, MTK_EINT_SENS_SET(irq), mask);
+		break;
+	case GPIO_INTR_LEVEL_HIGH:
+		sc->gpio_pic_irqsrc[irq].edge_both = false;
+		MTK_EINT_WRITE_4(sc, MTK_EINT_POL_SET(irq), mask);
+		MTK_EINT_WRITE_4(sc, MTK_EINT_SENS_SET(irq), mask);
+		break;
+	case GPIO_INTR_EDGE_RISING:
+		sc->gpio_pic_irqsrc[irq].edge_both = false;
+		MTK_EINT_WRITE_4(sc, MTK_EINT_POL_SET(irq), mask);
+		MTK_EINT_WRITE_4(sc, MTK_EINT_SENS_CLR(irq), mask);
+		break;
+	case GPIO_INTR_EDGE_FALLING:
+		sc->gpio_pic_irqsrc[irq].edge_both = false;
+		MTK_EINT_WRITE_4(sc, MTK_EINT_POL_CLR(irq), mask);
+		MTK_EINT_WRITE_4(sc, MTK_EINT_SENS_CLR(irq), mask);
+		break;
+	case GPIO_INTR_EDGE_BOTH:
+		sc->gpio_pic_irqsrc[irq].edge_both = true;
+		/* pol is setted on mtk_gpio_pic_enable_intr */
+		MTK_EINT_WRITE_4(sc, MTK_EINT_SENS_SET(irq), mask);
+		break;
+	}
+
+//TODO 
+/* Switch the pin to interrupt mode */
+
+	val = MTK_EINT_READ_4(sc, MTK_EINT_DO_EN(irq));
+	val |= mask;
+	MTK_EINT_WRITE_4(sc, MTK_EINT_DO_EN(irq), val);
+
+	MTK_EINT_WRITE_4(sc, MTK_EINT_ACK(irq), mask);
+	MTK_GPIO_UNLOCK(sc);
+
 	return (0);
 }
 
@@ -1210,32 +1422,80 @@ static int
 mtk_gpio_pic_teardown_intr(device_t dev, struct intr_irqsrc *isrc,
     struct resource *res, struct intr_map_data *data)
 {
+	struct mtk_gpio_softc *sc;
+	uint32_t mask, val;
+	u_int irq;
 
-	printf("%s\n", __func__);
+	sc = device_get_softc(dev);
+	irq = ((struct gpio_irqsrc *)isrc)->irq;
+	mask = 1U << (irq & 0x1f);
+	if (isrc->isrc_handlers == 0) {
+		MTK_GPIO_LOCK(sc);
+		MTK_EINT_WRITE_4(sc, MTK_EINT_ACK(irq), mask);
+		val = MTK_EINT_READ_4(sc, MTK_EINT_DO_EN(irq));
+		val &= ~mask;
+		MTK_EINT_WRITE_4(sc, MTK_EINT_DO_EN(irq), val);
+//TODO	
+/* Switch back the pin to it's original function */
+		MTK_GPIO_UNLOCK(sc);
+	}
+
 	return (0);
 }
 
 static void
 mtk_gpio_pic_post_filter(device_t dev, struct intr_irqsrc *isrc)
 {
+	struct mtk_gpio_softc *sc;
+	uint32_t mask;
+	u_int irq;
 
-	printf("%s\n", __func__);
+	sc = device_get_softc(dev);
+	irq = ((struct gpio_irqsrc *)isrc)->irq;
+	mask = 1U << (irq & 0x1f);
+
+	arm_irq_memory_barrier(0);
+	MTK_EINT_WRITE_4(sc, MTK_EINT_ACK(irq), mask);
 }
 
 static void
 mtk_gpio_pic_post_ithread(device_t dev, struct intr_irqsrc *isrc)
 {
+	struct mtk_gpio_softc *sc;
+	uint32_t mask;
+	u_int irq;
 
-	printf("%s\n", __func__);
+	sc = device_get_softc(dev);
+	irq = ((struct gpio_irqsrc *)isrc)->irq;
+	mask = 1U << (irq & 0x1f);
+
+	arm_irq_memory_barrier(0);
+	MTK_EINT_WRITE_4(sc, MTK_EINT_ACK(irq), mask);
+	mtk_gpio_pic_enable_intr(dev, isrc);
+/* If the pin value changes faster than the interrupt is processed,
+ * we lose one edge. To avoid this we can call a software interrupt
+ */ 
+#if 0
+	if (sc->gpio_pic_irqsrc[irq].edge_both) {
+//TODO check if the previous pin value is the same as the current one.
+//if not, rise software interrupt
+		MTK_EINT_WRITE_4(sc, MTK_EINT_SOFT_SET(irq), mask);
+	}
+#endif
 }
+
 
 static void
 mtk_gpio_pic_pre_ithread(device_t dev, struct intr_irqsrc *isrc)
 {
-	printf("%s\n", __func__);
+	struct mtk_gpio_softc *sc;
 
+	sc = device_get_softc(dev);
+
+	MTK_GPIO_LOCK(sc);
+	mtk_gpio_pic_disable_intr_locked(sc, isrc);
+	MTK_GPIO_UNLOCK(sc);
 }
-
 
 /*
  * OFWBUS Interface
@@ -1243,8 +1503,6 @@ mtk_gpio_pic_pre_ithread(device_t dev, struct intr_irqsrc *isrc)
 static phandle_t
 mtk_gpio_get_node(device_t dev, device_t bus)
 {
-	printf("%s\n", __func__);
-
 	/* We only have one child, the GPIO bus, which needs our own node. */
 	return (ofw_bus_get_node(dev));
 }
@@ -1254,6 +1512,10 @@ static device_method_t mtk_gpio_methods[] = {
 	DEVMETHOD(device_probe,		mtk_gpio_probe),
 	DEVMETHOD(device_attach,	mtk_gpio_attach),
 	DEVMETHOD(device_detach,	mtk_gpio_detach),
+
+	/* Bus interface */
+	DEVMETHOD(bus_setup_intr,	bus_generic_setup_intr),
+	DEVMETHOD(bus_teardown_intr,	bus_generic_teardown_intr),
 
 	/* Interrupt controller interface */
 	DEVMETHOD(pic_disable_intr,	mtk_gpio_pic_disable_intr),
