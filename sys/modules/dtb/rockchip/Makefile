@@ -25,7 +25,8 @@ DTSO=	rk3328-analog-sound.dtso \
 	rk3328-uart1.dtso \
 	rk3399-mmc0-disable.dtso \
 	rk3399-mmc1-disable.dtso \
-	rk3399-sdhci-disable.dtso
+	rk3399-sdhci-disable.dtso \
+	rk3568-nanopi-r5s.dtso
 .endif
 
 .include <bsd.dtb.mk>
