@@ -1558,9 +1558,6 @@ eqos_attach(device_t dev)
 	if ((error = IF_EQOS_INIT(dev)))
 		return (error);
 
-	if ((error = IF_EQOS_INIT(dev)))
-		return (error);
-
 	sc->dev = dev;
 
  	sc->phy_attached = 0;
