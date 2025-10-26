@@ -1,0 +1,14 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+	compatible = "rockchip,rk3568";
+};
+
+&{/i2c@fdd40000/pmic@20} {
+	clock-output-names = "rk808-clkout1", "rk808-clkout2";
+};
+
+&{/syscon@fdc20000/io-domains} {
+	vccio2-supply = <&vcc_1v8>;
+}

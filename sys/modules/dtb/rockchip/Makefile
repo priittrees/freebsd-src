@@ -18,7 +18,8 @@ DTS=	\
 	rockchip/rk3399-firefly.dts \
 	rockchip/rk3399-rockpro64.dts \
 	rockchip/rk3566-quartz64-a.dts \
-	rockchip/rk3568-nanopi-r5s.dts
+	rockchip/rk3568-nanopi-r5s.dts \
+	rockchip/rk3568-bpi-r2-pro.dts
 
 DTSO=	rk3328-analog-sound.dtso \
 	rk3328-i2c0.dtso \
@@ -27,9 +28,9 @@ DTSO=	rk3328-analog-sound.dtso \
 	rk3399-mmc1-disable.dtso \
 	rk3399-sdhci-disable.dtso \
 	rk356x-sdhci-disable-wp.dtso \
-	rk356x-pcie2-64bit-mem-disable.dtso \
 	rk356x-pcie3x1-64bit-mem-disable.dtso \
-	rk356x-pcie3x2-64bit-mem-disable.dtso
+	rk356x-pcie3x2-64bit-mem-disable.dtso \
+	rk3568-bpi-r2-pro.dtso
 .endif
 
 .include <bsd.dtb.mk>
