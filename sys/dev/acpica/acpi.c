@@ -55,6 +55,8 @@
 #if defined(__i386__) || defined(__amd64__)
 #include <machine/clock.h>
 #include <machine/pci_cfgreg.h>
+#include <x86/cputypes.h>
+#include <x86/x86_var.h>
 #endif
 #include <machine/resource.h>
 #include <machine/bus.h>
@@ -125,16 +127,22 @@ static bus_child_deleted_t	acpi_child_deleted;
 static bus_read_ivar_t		acpi_read_ivar;
 static bus_write_ivar_t		acpi_write_ivar;
 static bus_get_resource_list_t	acpi_get_rlist;
+static bus_get_rman_t		acpi_get_rman;
 static bus_set_resource_t	acpi_set_resource;
 static bus_alloc_resource_t	acpi_alloc_resource;
 static bus_adjust_resource_t	acpi_adjust_resource;
 static bus_release_resource_t	acpi_release_resource;
 static bus_delete_resource_t	acpi_delete_resource;
+static bus_activate_resource_t	acpi_activate_resource;
+static bus_deactivate_resource_t acpi_deactivate_resource;
+static bus_map_resource_t	acpi_map_resource;
+static bus_unmap_resource_t	acpi_unmap_resource;
 static bus_child_pnpinfo_t	acpi_child_pnpinfo_method;
 static bus_child_location_t	acpi_child_location_method;
 static bus_hint_device_unit_t	acpi_hint_device_unit;
 static bus_get_property_t	acpi_bus_get_prop;
 static bus_get_device_path_t	acpi_get_device_path;
+static bus_get_domain_t		acpi_get_domain_method;
 
 static acpi_id_probe_t		acpi_device_id_probe;
 static acpi_evaluate_object_t	acpi_device_eval_obj;
@@ -195,21 +203,24 @@ static device_method_t acpi_methods[] = {
     DEVMETHOD(bus_read_ivar,		acpi_read_ivar),
     DEVMETHOD(bus_write_ivar,		acpi_write_ivar),
     DEVMETHOD(bus_get_resource_list,	acpi_get_rlist),
+    DEVMETHOD(bus_get_rman,		acpi_get_rman),
     DEVMETHOD(bus_set_resource,		acpi_set_resource),
     DEVMETHOD(bus_get_resource,		bus_generic_rl_get_resource),
     DEVMETHOD(bus_alloc_resource,	acpi_alloc_resource),
     DEVMETHOD(bus_adjust_resource,	acpi_adjust_resource),
     DEVMETHOD(bus_release_resource,	acpi_release_resource),
     DEVMETHOD(bus_delete_resource,	acpi_delete_resource),
+    DEVMETHOD(bus_activate_resource,	acpi_activate_resource),
+    DEVMETHOD(bus_deactivate_resource,	acpi_deactivate_resource),
+    DEVMETHOD(bus_map_resource,		acpi_map_resource),
+    DEVMETHOD(bus_unmap_resource,      	acpi_unmap_resource),
     DEVMETHOD(bus_child_pnpinfo,	acpi_child_pnpinfo_method),
     DEVMETHOD(bus_child_location,	acpi_child_location_method),
-    DEVMETHOD(bus_activate_resource,	bus_generic_activate_resource),
-    DEVMETHOD(bus_deactivate_resource,	bus_generic_deactivate_resource),
     DEVMETHOD(bus_setup_intr,		bus_generic_setup_intr),
     DEVMETHOD(bus_teardown_intr,	bus_generic_teardown_intr),
     DEVMETHOD(bus_hint_device_unit,	acpi_hint_device_unit),
     DEVMETHOD(bus_get_cpus,		acpi_get_cpus),
-    DEVMETHOD(bus_get_domain,		acpi_get_domain),
+    DEVMETHOD(bus_get_domain,		acpi_get_domain_method),
     DEVMETHOD(bus_get_property,		acpi_bus_get_prop),
     DEVMETHOD(bus_get_device_path,	acpi_get_device_path),
 
@@ -288,6 +299,10 @@ TUNABLE_INT("debug.acpi.quirks", &acpi_quirks);
 int acpi_susp_bounce;
 SYSCTL_INT(_debug_acpi, OID_AUTO, suspend_bounce, CTLFLAG_RW,
     &acpi_susp_bounce, 0, "Don't actually suspend, just test devices.");
+
+#if defined(__amd64__) || defined(__i386__)
+int acpi_override_isa_irq_polarity;
+#endif
 
 /*
  * ACPI standard UUID for Device Specific Data Package
@@ -478,6 +493,8 @@ acpi_attach(device_t dev)
     if (rman_init(&acpi_rman_mem) != 0)
 	panic("acpi rman_init memory failed");
 
+    resource_list_init(&sc->sysres_rl);
+
     /* Initialise the ACPI mutex */
     mtx_init(&acpi_mutex, "ACPI global lock", NULL, MTX_DEF);
 
@@ -600,6 +617,19 @@ acpi_attach(device_t dev)
     SYSCTL_ADD_INT(&sc->acpi_sysctl_ctx, SYSCTL_CHILDREN(sc->acpi_sysctl_tree),
 	OID_AUTO, "handle_reboot", CTLFLAG_RW,
 	&sc->acpi_handle_reboot, 0, "Use ACPI Reset Register to reboot");
+
+#if defined(__amd64__) || defined(__i386__)
+    /*
+     * Enable workaround for incorrect ISA IRQ polarity by default on
+     * systems with Intel CPUs.
+     */
+    if (cpu_vendor_id == CPU_VENDOR_INTEL)
+	acpi_override_isa_irq_polarity = 1;
+    SYSCTL_ADD_INT(&sc->acpi_sysctl_ctx, SYSCTL_CHILDREN(sc->acpi_sysctl_tree),
+	OID_AUTO, "override_isa_irq_polarity", CTLFLAG_RDTUN,
+	&acpi_override_isa_irq_polarity, 0,
+	"Force active-hi polarity for edge-triggered ISA IRQs");
+#endif
 
     /*
      * Default to 1 second before sleeping to give some machines time to
@@ -790,6 +820,7 @@ acpi_add_child(device_t bus, u_int order, const char *name, int unit)
     if ((ad = malloc(sizeof(*ad), M_ACPIDEV, M_NOWAIT | M_ZERO)) == NULL)
 	return (NULL);
 
+    ad->ad_domain = ACPI_DEV_DOMAIN_UNKNOWN;
     resource_list_init(&ad->ad_rl);
 
     child = device_add_child_ordered(bus, order, name, unit);
@@ -1026,6 +1057,9 @@ acpi_read_ivar(device_t dev, device_t child, int index, uintptr_t *result)
     case ACPI_IVAR_FLAGS:
 	*(int *)result = ad->ad_flags;
 	break;
+    case ACPI_IVAR_DOMAIN:
+	*(int *)result = ad->ad_domain;
+	break;
     case ISA_IVAR_VENDORID:
     case ISA_IVAR_SERIAL:
     case ISA_IVAR_COMPATID:
@@ -1069,6 +1103,9 @@ acpi_write_ivar(device_t dev, device_t child, int index, uintptr_t value)
 	break;
     case ACPI_IVAR_FLAGS:
 	ad->ad_flags = (int)value;
+	break;
+    case ACPI_IVAR_DOMAIN:
+	ad->ad_domain = (int)value;
 	break;
     default:
 	panic("bad ivar write request (%d)", index);
@@ -1217,8 +1254,8 @@ acpi_hint_device_unit(device_t acdev, device_t child, const char *name,
  * _PXM to a NUMA domain.  If the device does not have a _PXM method,
  * -2 is returned.  If any other error occurs, -1 is returned.
  */
-static int
-acpi_parse_pxm(device_t dev)
+int
+acpi_pxm_parse(device_t dev)
 {
 #ifdef NUMA
 #if defined(__i386__) || defined(__amd64__) || defined(__aarch64__)
@@ -1245,7 +1282,7 @@ acpi_get_cpus(device_t dev, device_t child, enum cpu_sets op, size_t setsize,
 {
 	int d, error;
 
-	d = acpi_parse_pxm(child);
+	d = acpi_pxm_parse(child);
 	if (d < 0)
 		return (bus_generic_get_cpus(dev, child, op, setsize, cpuset));
 
@@ -1268,29 +1305,30 @@ acpi_get_cpus(device_t dev, device_t child, enum cpu_sets op, size_t setsize,
 	}
 }
 
-/*
- * Fetch the NUMA domain for the given device 'dev'.
- *
- * If a device has a _PXM method, map that to a NUMA domain.
- * Otherwise, pass the request up to the parent.
- * If there's no matching domain or the domain cannot be
- * determined, return ENOENT.
- */
-int
-acpi_get_domain(device_t dev, device_t child, int *domain)
+static int
+acpi_get_domain_method(device_t dev, device_t child, int *domain)
 {
-	int d;
+	int error;
 
-	d = acpi_parse_pxm(child);
-	if (d >= 0) {
-		*domain = d;
+	error = acpi_read_ivar(dev, child, ACPI_IVAR_DOMAIN,
+	    (uintptr_t *)domain);
+	if (error == 0 && *domain != ACPI_DEV_DOMAIN_UNKNOWN)
 		return (0);
-	}
-	if (d == -1)
-		return (ENOENT);
+	return (ENOENT);
+}
 
-	/* No _PXM node; go up a level */
-	return (bus_generic_get_domain(dev, child, domain));
+static struct rman *
+acpi_get_rman(device_t bus, int type, u_int flags)
+{
+	/* Only memory and IO resources are managed. */
+	switch (type) {
+	case SYS_RES_IOPORT:
+		return (&acpi_rman_io);
+	case SYS_RES_MEMORY:
+		return (&acpi_rman_mem);
+	default:
+		return (NULL);
+	}
 }
 
 /*
@@ -1300,8 +1338,8 @@ acpi_get_domain(device_t dev, device_t child, int *domain)
 static int
 acpi_sysres_alloc(device_t dev)
 {
+    struct acpi_softc *sc = device_get_softc(dev);
     struct resource *res;
-    struct resource_list *rl;
     struct resource_list_entry *rle;
     struct rman *rm;
     device_t *children;
@@ -1319,28 +1357,21 @@ acpi_sysres_alloc(device_t dev)
     }
     free(children, M_TEMP);
 
-    rl = BUS_GET_RESOURCE_LIST(device_get_parent(dev), dev);
-    STAILQ_FOREACH(rle, rl, link) {
+    STAILQ_FOREACH(rle, &sc->sysres_rl, link) {
 	if (rle->res != NULL) {
 	    device_printf(dev, "duplicate resource for %jx\n", rle->start);
 	    continue;
 	}
 
 	/* Only memory and IO resources are valid here. */
-	switch (rle->type) {
-	case SYS_RES_IOPORT:
-	    rm = &acpi_rman_io;
-	    break;
-	case SYS_RES_MEMORY:
-	    rm = &acpi_rman_mem;
-	    break;
-	default:
+	rm = acpi_get_rman(dev, rle->type, 0);
+	if (rm == NULL)
 	    continue;
-	}
 
 	/* Pre-allocate resource and add to our rman pool. */
-	res = BUS_ALLOC_RESOURCE(device_get_parent(dev), dev, rle->type,
-	    &rle->rid, rle->start, rle->start + rle->count - 1, rle->count, 0);
+	res = bus_alloc_resource(dev, rle->type,
+	    &rle->rid, rle->start, rle->start + rle->count - 1, rle->count,
+	    RF_ACTIVE | RF_UNMAPPED);
 	if (res != NULL) {
 	    rman_manage_region(rm, rman_get_start(res), rman_get_end(res));
 	    rle->res = res;
@@ -1517,63 +1548,39 @@ acpi_alloc_resource(device_t bus, device_t child, int type, int *rid,
      * from our system resource regions.
      */
     if (res == NULL && start + count - 1 == end)
-	res = acpi_alloc_sysres(child, type, rid, start, end, count, flags);
+	res = bus_generic_rman_alloc_resource(bus, child, type, rid, start, end,
+	    count, flags);
     return (res);
 }
 
-/*
- * Attempt to allocate a specific resource range from the system
- * resource ranges.  Note that we only handle memory and I/O port
- * system resources.
- */
-struct resource *
-acpi_alloc_sysres(device_t child, int type, int *rid, rman_res_t start,
-    rman_res_t end, rman_res_t count, u_int flags)
+static bool
+acpi_is_resource_managed(device_t bus, struct resource *r)
 {
-    struct rman *rm;
-    struct resource *res;
+	struct rman *rm;
 
-    switch (type) {
-    case SYS_RES_IOPORT:
-	rm = &acpi_rman_io;
-	break;
-    case SYS_RES_MEMORY:
-	rm = &acpi_rman_mem;
-	break;
-    default:
-	return (NULL);
-    }
+	rm = acpi_get_rman(bus, rman_get_type(r), rman_get_flags(r));
+	if (rm == NULL)
+		return (false);
+	return (rman_is_region_manager(r, rm));
+}
 
-    KASSERT(start + count - 1 == end, ("wildcard resource range"));
-    res = rman_reserve_resource(rm, start, end, count, flags & ~RF_ACTIVE,
-	child);
-    if (res == NULL)
-	return (NULL);
+static struct resource *
+acpi_managed_resource(device_t bus, int type, struct resource *r)
+{
+	struct acpi_softc *sc = device_get_softc(bus);
+	struct resource_list_entry *rle;
 
-    rman_set_rid(res, *rid);
+	KASSERT(acpi_is_resource_managed(bus, r),
+	    ("resource %p is not suballocated", r));
 
-    /* If requested, activate the resource using the parent's method. */
-    if (flags & RF_ACTIVE)
-	if (bus_activate_resource(child, type, *rid, res) != 0) {
-	    rman_release_resource(res);
-	    return (NULL);
+	STAILQ_FOREACH(rle, &sc->sysres_rl, link) {
+		if (rle->type != type || rle->res == NULL)
+			continue;
+		if (rman_get_start(r) >= rman_get_start(rle->res) &&
+		    rman_get_end(r) <= rman_get_end(rle->res))
+			return (rle->res);
 	}
-
-    return (res);
-}
-
-static int
-acpi_is_resource_managed(int type, struct resource *r)
-{
-
-    /* We only handle memory and IO resources through rman. */
-    switch (type) {
-    case SYS_RES_IOPORT:
-	return (rman_is_region_manager(r, &acpi_rman_io));
-    case SYS_RES_MEMORY:
-	return (rman_is_region_manager(r, &acpi_rman_mem));
-    }
-    return (0);
+	return (NULL);
 }
 
 static int
@@ -1581,7 +1588,7 @@ acpi_adjust_resource(device_t bus, device_t child, int type, struct resource *r,
     rman_res_t start, rman_res_t end)
 {
 
-    if (acpi_is_resource_managed(type, r))
+    if (acpi_is_resource_managed(bus, r))
 	return (rman_adjust_resource(r, start, end));
     return (bus_generic_adjust_resource(bus, child, type, r, start, end));
 }
@@ -1590,20 +1597,12 @@ static int
 acpi_release_resource(device_t bus, device_t child, int type, int rid,
     struct resource *r)
 {
-    int ret;
-
     /*
      * If this resource belongs to one of our internal managers,
      * deactivate it and release it to the local pool.
      */
-    if (acpi_is_resource_managed(type, r)) {
-	if (rman_get_flags(r) & RF_ACTIVE) {
-	    ret = bus_deactivate_resource(child, type, rid, r);
-	    if (ret != 0)
-		return (ret);
-	}
-	return (rman_release_resource(r));
-    }
+    if (acpi_is_resource_managed(bus, r))
+	return (bus_generic_rman_release_resource(bus, child, type, rid, r));
 
     return (bus_generic_rl_release_resource(bus, child, type, rid, r));
 }
@@ -1622,6 +1621,72 @@ acpi_delete_resource(device_t bus, device_t child, int type, int rid)
     if (resource_list_reserved(rl, type, rid))
 	resource_list_unreserve(rl, bus, child, type, rid);
     resource_list_delete(rl, type, rid);
+}
+
+static int
+acpi_activate_resource(device_t bus, device_t child, int type, int rid,
+    struct resource *r)
+{
+	if (acpi_is_resource_managed(bus, r))
+		return (bus_generic_rman_activate_resource(bus, child, type,
+		    rid, r));
+	return (bus_generic_activate_resource(bus, child, type, rid, r));
+}
+
+static int
+acpi_deactivate_resource(device_t bus, device_t child, int type, int rid,
+    struct resource *r)
+{
+	if (acpi_is_resource_managed(bus, r))
+		return (bus_generic_rman_deactivate_resource(bus, child, type,
+		    rid, r));
+	return (bus_generic_deactivate_resource(bus, child, type, rid, r));
+}
+
+static int
+acpi_map_resource(device_t bus, device_t child, int type, struct resource *r,
+    struct resource_map_request *argsp, struct resource_map *map)
+{
+	struct resource_map_request args;
+	struct resource *sysres;
+	rman_res_t length, start;
+	int error;
+
+	if (!acpi_is_resource_managed(bus, r))
+		return (bus_generic_map_resource(bus, child, type, r, argsp,
+		    map));
+
+	/* Resources must be active to be mapped. */
+	if (!(rman_get_flags(r) & RF_ACTIVE))
+		return (ENXIO);
+
+	resource_init_map_request(&args);
+	error = resource_validate_map_request(r, argsp, &args, &start, &length);
+	if (error)
+		return (error);
+
+	sysres = acpi_managed_resource(bus, type, r);
+	if (sysres == NULL)
+		return (ENOENT);
+
+	args.offset = start - rman_get_start(sysres);
+	args.length = length;
+	return (bus_map_resource(bus, sysres, &args, map));
+}
+
+static int
+acpi_unmap_resource(device_t bus, device_t child, int type, struct resource *r,
+    struct resource_map *map)
+{
+	struct resource *sysres;
+
+	if (!acpi_is_resource_managed(bus, r))
+		return (bus_generic_unmap_resource(bus, child, type, r, map));
+
+	sysres = acpi_managed_resource(bus, type, r);
+	if (sysres == NULL)
+		return (ENOENT);
+	return (bus_unmap_resource(bus, sysres, map));
 }
 
 /* Allocate an IO port or memory resource, given its GAS. */
@@ -2284,7 +2349,7 @@ acpi_probe_child(ACPI_HANDLE handle, UINT32 level, void *context, void **status)
     ACPI_HANDLE h;
     device_t bus, child;
     char *handle_str;
-    int order;
+    int d, order;
 
     ACPI_FUNCTION_TRACE((char *)(uintptr_t)__func__);
 
@@ -2392,6 +2457,10 @@ acpi_probe_child(ACPI_HANDLE handle, UINT32 level, void *context, void **status)
 		}
 		AcpiOsFree(devinfo);
 	    }
+
+	    d = acpi_pxm_parse(child);
+	    if (d >= 0)
+		ad->ad_domain = d;
 	    break;
 	}
     }
@@ -3839,13 +3908,22 @@ acpi_invoke_wake_eventhandler(void *context)
 UINT32
 acpi_event_power_button_sleep(void *context)
 {
+#if defined(__amd64__) || defined(__i386__)
     struct acpi_softc	*sc = (struct acpi_softc *)context;
+#else
+    (void)context;
+#endif
 
     ACPI_FUNCTION_TRACE((char *)(uintptr_t)__func__);
 
+#if defined(__amd64__) || defined(__i386__)
     if (ACPI_FAILURE(AcpiOsExecute(OSL_NOTIFY_HANDLER,
 	acpi_invoke_sleep_eventhandler, &sc->acpi_power_button_sx)))
 	return_VALUE (ACPI_INTERRUPT_NOT_HANDLED);
+#else
+    shutdown_nice(RB_POWEROFF);
+#endif
+
     return_VALUE (ACPI_INTERRUPT_HANDLED);
 }
 

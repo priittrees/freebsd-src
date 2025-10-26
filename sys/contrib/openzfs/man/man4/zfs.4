@@ -98,7 +98,7 @@ and only applicable in related situations.
 .It Sy l2arc_feed_secs Ns = Ns Sy 1 Pq u64
 Seconds between L2ARC writing.
 .
-.It Sy l2arc_headroom Ns = Ns Sy 2 Pq u64
+.It Sy l2arc_headroom Ns = Ns Sy 8 Pq u64
 How far through the ARC lists to search for L2ARC cacheable content,
 expressed as a multiplier of
 .Sy l2arc_write_max .
@@ -121,19 +121,25 @@ Controls whether buffers present on special vdevs are eligible for caching
 into L2ARC.
 If set to 1, exclude dbufs on special vdevs from being cached to L2ARC.
 .
-.It Sy l2arc_mfuonly Ns = Ns Sy 0 Ns | Ns 1 Pq  int
+.It Sy l2arc_mfuonly Ns = Ns Sy 0 Ns | Ns 1 Ns | Ns 2 Pq int
 Controls whether only MFU metadata and data are cached from ARC into L2ARC.
 This may be desired to avoid wasting space on L2ARC when reading/writing large
 amounts of data that are not expected to be accessed more than once.
 .Pp
-The default is off,
+The default is 0,
 meaning both MRU and MFU data and metadata are cached.
-When turning off this feature, some MRU buffers will still be present
-in ARC and eventually cached on L2ARC.
+When turning off this feature (setting it to 0), some MRU buffers will
+still be present in ARC and eventually cached on L2ARC.
 .No If Sy l2arc_noprefetch Ns = Ns Sy 0 ,
 some prefetched buffers will be cached to L2ARC, and those might later
 transition to MRU, in which case the
 .Sy l2arc_mru_asize No arcstat will not be Sy 0 .
+.Pp
+Setting it to 1 means to L2 cache only MFU data and metadata.
+.Pp
+Setting it to 2 means to L2 cache all metadata (MRU+MFU) but
+only MFU data (ie: MRU data are not cached). This can be the right setting
+to cache as much metadata as possible even when having high data turnover.
 .Pp
 Regardless of
 .Sy l2arc_noprefetch ,
@@ -201,12 +207,12 @@ to enable caching/reading prefetches to/from L2ARC.
 .It Sy l2arc_norw Ns = Ns Sy 0 Ns | Ns 1 Pq int
 No reads during writes.
 .
-.It Sy l2arc_write_boost Ns = Ns Sy 8388608 Ns B Po 8 MiB Pc Pq u64
+.It Sy l2arc_write_boost Ns = Ns Sy 33554432 Ns B Po 32 MiB Pc Pq u64
 Cold L2ARC devices will have
 .Sy l2arc_write_max
 increased by this amount while they remain cold.
 .
-.It Sy l2arc_write_max Ns = Ns Sy 8388608 Ns B Po 8 MiB Pc Pq u64
+.It Sy l2arc_write_max Ns = Ns Sy 33554432 Ns B Po 32 MiB Pc Pq u64
 Max write bytes per interval.
 .
 .It Sy l2arc_rebuild_enabled Ns = Ns Sy 1 Ns | Ns 0 Pq int
@@ -883,6 +889,13 @@ Historically used for controlling what reporting was available under
 .Pa /proc/spl/kstat/zfs .
 No effect.
 .
+.It Sy zfs_deadman_checktime_ms Ns = Ns Sy 60000 Ns ms Po 1 min Pc Pq u64
+Check time in milliseconds.
+This defines the frequency at which we check for hung I/O requests
+and potentially invoke the
+.Sy zfs_deadman_failmode
+behavior.
+.
 .It Sy zfs_deadman_enabled Ns = Ns Sy 1 Ns | Ns 0 Pq int
 When a pool sync operation takes longer than
 .Sy zfs_deadman_synctime_ms ,
@@ -897,6 +910,10 @@ By default, the deadman is enabled and set to
 .Sy wait
 which results in "hung" I/O operations only being logged.
 The deadman is automatically disabled when a pool gets suspended.
+.
+.It Sy zfs_deadman_events_per_second Ns = Ns Sy 1 Ns /s Pq int
+Rate limit deadman zevents (which report hung I/O operations) to this many per
+second.
 .
 .It Sy zfs_deadman_failmode Ns = Ns Sy wait Pq charp
 Controls the failure behavior when the deadman detects a "hung" I/O operation.
@@ -914,13 +931,6 @@ Panic the system.
 This can be used to facilitate automatic fail-over
 to a properly configured fail-over partner.
 .El
-.
-.It Sy zfs_deadman_checktime_ms Ns = Ns Sy 60000 Ns ms Po 1 min Pc Pq u64
-Check time in milliseconds.
-This defines the frequency at which we check for hung I/O requests
-and potentially invoke the
-.Sy zfs_deadman_failmode
-behavior.
 .
 .It Sy zfs_deadman_synctime_ms Ns = Ns Sy 600000 Ns ms Po 10 min Pc Pq u64
 Interval in milliseconds after which the deadman is triggered and also
@@ -979,8 +989,7 @@ will result in objects waiting when there is not actually contention on the
 same object.
 .
 .It Sy zfs_slow_io_events_per_second Ns = Ns Sy 20 Ns /s Pq int
-Rate limit delay and deadman zevents (which report slow I/O operations) to this
-many per
+Rate limit delay zevents (which report slow I/O operations) to this many per
 second.
 .
 .It Sy zfs_unflushed_max_mem_amt Ns = Ns Sy 1073741824 Ns B Po 1 GiB Pc Pq u64
@@ -1598,6 +1607,11 @@ Therefore, we formerly forbade creating blocks larger than 1M.
 Larger blocks could be created by changing it,
 and pools with larger blocks can always be imported and used,
 regardless of this setting.
+.Pp
+Note that it is still limited by default to
+.Ar 1 MiB
+on x86_32, because Linux's
+3/1 memory split doesn't leave much room for 16M chunks.
 .
 .It Sy zfs_allow_redacted_dataset_mount Ns = Ns Sy 0 Ns | Ns 1 Pq int
 Allow datasets received with redacted send/receive to be mounted.
@@ -2324,8 +2338,8 @@ Prioritize requeued I/O.
 .
 .It Sy zio_taskq_batch_pct Ns = Ns Sy 80 Ns % Pq uint
 Percentage of online CPUs which will run a worker thread for I/O.
-These workers are responsible for I/O work such as compression and
-checksum calculations.
+These workers are responsible for I/O work such as compression, encryption,
+checksum and parity calculations.
 Fractional number of CPUs will be rounded down.
 .Pp
 The default value of
@@ -2333,6 +2347,7 @@ The default value of
 was chosen to avoid using all CPUs which can result in
 latency issues and inconsistent application performance,
 especially when slower compression and/or checksumming is enabled.
+Set value only applies to pools imported/created after that.
 .
 .It Sy zio_taskq_batch_tpq Ns = Ns Sy 0 Pq uint
 Number of worker threads per taskq.
@@ -2342,16 +2357,19 @@ while higher reduces lock contention.
 If
 .Sy 0 ,
 generate a system-dependent value close to 6 threads per taskq.
+Set value only applies to pools imported/created after that.
 .
 .It Sy zio_taskq_read Ns = Ns Sy fixed,1,8 null scale null Pq charp
 Set the queue and thread configuration for the IO read queues.
 This is an advanced debugging parameter.
 Don't change this unless you understand what it does.
+Set values only apply to pools imported/created after that.
 .
 .It Sy zio_taskq_write Ns = Ns Sy batch fixed,1,5 scale fixed,1,5 Pq charp
 Set the queue and thread configuration for the IO write queues.
 This is an advanced debugging parameter.
 Don't change this unless you understand what it does.
+Set values only apply to pools imported/created after that.
 .
 .It Sy zvol_inhibit_dev Ns = Ns Sy 0 Ns | Ns 1 Pq uint
 Do not create zvol device nodes.

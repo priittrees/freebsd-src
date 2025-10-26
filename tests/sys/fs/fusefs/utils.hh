@@ -55,6 +55,7 @@ bool is_unsafe_aio_enabled(void);
 extern const uint32_t libfuse_max_write;
 class FuseTest : public ::testing::Test {
 	protected:
+	uint32_t m_maxread;
 	uint32_t m_maxreadahead;
 	uint32_t m_maxwrite;
 	uint32_t m_init_flags;
@@ -77,9 +78,10 @@ class FuseTest : public ::testing::Test {
 
 	public:
 	int m_maxbcachebuf;
-	int m_maxphys;
+	unsigned long m_maxphys;
 
 	FuseTest():
+		m_maxread(0),
 		m_maxreadahead(0),
 		m_maxwrite(0),
 		m_init_flags(0),

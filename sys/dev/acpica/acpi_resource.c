@@ -159,14 +159,11 @@ acpi_config_intr(device_t dev, ACPI_RESOURCE *res)
     }
 
 #if defined(__amd64__) || defined(__i386__)
-    /*
-     * XXX: Certain BIOSes have buggy AML that specify an IRQ that is
-     * edge-sensitive and active-lo.  However, edge-sensitive IRQs
-     * should be active-hi.  Force IRQs with an ISA IRQ value to be
-     * active-hi instead.
-     */
-    if (irq < 16 && trig == ACPI_EDGE_SENSITIVE && pol == ACPI_ACTIVE_LOW)
+    if (irq < 16 && trig == ACPI_EDGE_SENSITIVE && pol == ACPI_ACTIVE_LOW &&
+	acpi_override_isa_irq_polarity) {
+	device_printf(dev, "forcing active-hi polarity for IRQ %u\n", irq);
 	pol = ACPI_ACTIVE_HIGH;
+    }
 #endif
     BUS_CONFIG_INTR(dev, irq, (trig == ACPI_EDGE_SENSITIVE) ?
 	INTR_TRIGGER_EDGE : INTR_TRIGGER_LEVEL, (pol == ACPI_ACTIVE_HIGH) ?
@@ -795,8 +792,6 @@ acpi_res_set_end_dependent(device_t dev, void *context)
  * private rman.
  */
 
-static int	acpi_sysres_rid = 100;
-
 static int	acpi_sysres_probe(device_t dev);
 static int	acpi_sysres_attach(device_t dev);
 
@@ -838,6 +833,7 @@ static int
 acpi_sysres_attach(device_t dev)
 {
     device_t bus;
+    struct acpi_softc *bus_sc;
     struct resource_list_entry *bus_rle, *dev_rle;
     struct resource_list *bus_rl, *dev_rl;
     int done, type;
@@ -852,7 +848,8 @@ acpi_sysres_attach(device_t dev)
      */
     bus = device_get_parent(dev);
     dev_rl = BUS_GET_RESOURCE_LIST(bus, dev);
-    bus_rl = BUS_GET_RESOURCE_LIST(device_get_parent(bus), bus);
+    bus_sc = acpi_device_get_parent_softc(dev);
+    bus_rl = &bus_sc->sysres_rl;
     STAILQ_FOREACH(dev_rle, dev_rl, link) {
 	if (dev_rle->type != SYS_RES_IOPORT && dev_rle->type != SYS_RES_MEMORY)
 	    continue;
@@ -892,7 +889,7 @@ acpi_sysres_attach(device_t dev)
 
 	/* If we didn't merge with anything, add this resource. */
 	if (bus_rle == NULL)
-	    bus_set_resource(bus, type, acpi_sysres_rid++, start, count);
+	    resource_list_add_next(bus_rl, type, start, end, count);
     }
 
     /* After merging/moving resources to the parent, free the list. */

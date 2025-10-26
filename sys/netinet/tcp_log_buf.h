@@ -60,14 +60,6 @@ struct tcp_log_verbose
 	uint8_t		_pad[4];
 } ALIGN_TCP_LOG;
 
-/* Internal RACK state variables. */
-struct tcp_log_rack
-{
-	uint32_t	tlr_rack_rtt;		/* rc_rack_rtt */
-	uint8_t		tlr_state;		/* Internal RACK state */
-	uint8_t		_pad[3];		/* Padding */
-};
-
 struct tcp_log_bbr {
 	uint64_t cur_del_rate;
 	uint64_t delRate;
@@ -126,7 +118,6 @@ struct tcp_log_sendfile {
  */
 union tcp_log_stackspecific
 {
-	struct tcp_log_rack u_rack;
 	struct tcp_log_bbr u_bbr;
 	struct tcp_log_sendfile u_sf;
 	struct tcp_log_raw u_raw;	/* "raw" log access */
@@ -185,7 +176,6 @@ struct tcp_log_buffer
 	uint8_t		_pad[3];	/* Padding */
 	/* Per-stack info */
 	union tcp_log_stackspecific tlb_stackinfo;
-#define	tlb_rack	tlb_stackinfo.u_rack
 
 	/* The packet */
 	uint32_t	tlb_len;	/* The packet's data length */
@@ -219,18 +209,18 @@ enum tcp_log_events {
 	BBR_LOG_BBRRTT,		/* BBR RTT is updated               20 */
 	BBR_LOG_JUSTRET,	/* We just returned out of output   21 */
 	BBR_LOG_STATE,		/* A BBR state change occurred      22 */
-	BBR_LOG_PKT_EPOCH,      /* A BBR packet epoch occurred      23 */
-	BBR_LOG_PERSIST,        /* BBR changed to/from a persists   24 */
-	TCP_LOG_FLOWEND,        /* End of a flow                    25 */
-	BBR_LOG_RTO,            /* BBR's timeout includes BBR info  26 */
-	BBR_LOG_DOSEG_DONE,     /* hpts do_segment completes        27 */
-	BBR_LOG_EXIT_GAIN,      /* hpts do_segment completes        28 */
-	BBR_LOG_THRESH_CALC,    /* Doing threshold calculation      29 */
+	BBR_LOG_PKT_EPOCH,	/* A BBR packet epoch occurred      23 */
+	BBR_LOG_PERSIST,	/* BBR changed to/from a persists   24 */
+	TCP_LOG_FLOWEND,	/* End of a flow                    25 */
+	BBR_LOG_RTO,		/* BBR's timeout includes BBR info  26 */
+	BBR_LOG_DOSEG_DONE,	/* hpts do_segment completes        27 */
+	BBR_LOG_EXIT_GAIN,	/* hpts do_segment completes        28 */
+	BBR_LOG_THRESH_CALC,	/* Doing threshold calculation      29 */
 	TCP_LOG_MAPCHG,		/* Map Changes to the sendmap       30 */
-	TCP_LOG_USERSEND, 	/* User level sends data            31 */
+	TCP_LOG_USERSEND,	/* User level sends data            31 */
 	BBR_RSM_CLEARED,	/* RSM cleared of ACK flags         32 */
-	BBR_LOG_STATE_TARGET, 	/* Log of target at state           33 */
-	BBR_LOG_TIME_EPOCH, 	/* A timed based Epoch occurred     34 */
+	BBR_LOG_STATE_TARGET,	/* Log of target at state           33 */
+	BBR_LOG_TIME_EPOCH,	/* A timed based Epoch occurred     34 */
 	BBR_LOG_TO_PROCESS,	/* A to was processed               35 */
 	BBR_LOG_BBRTSO,		/* TSO update                       36 */
 	BBR_LOG_HPTSDIAG,	/* Hpts diag insert                 37 */
@@ -257,15 +247,15 @@ enum tcp_log_events {
 	TCP_TIMELY_WORK,	/* Logs regarding Timely CC tweaks  58 */
 	TCP_LOG_USER_EVENT,	/* User space event data            59 */
 	TCP_LOG_SENDFILE,	/* sendfile() logging for TCP connections 60 */
-	TCP_LOG_REQ_T,		/* logging of request tracking 61 */
-	TCP_LOG_ACCOUNTING,	/* Log of TCP Accounting data 62 */
-	TCP_LOG_FSB,		/* FSB information 63 */
+	TCP_LOG_REQ_T,		/* logging of request tracking      61 */
+	TCP_LOG_ACCOUNTING,	/* Log of TCP Accounting data       62 */
+	TCP_LOG_FSB,		/* FSB information                  63 */
 	RACK_DSACK_HANDLING,	/* Handling of DSACK in rack for reordering window 64 */
-	TCP_HYSTART,		/* TCP Hystart logging 65 */
-	TCP_CHG_QUERY,		/* Change query during fnc_init() 66 */
-	TCP_RACK_LOG_COLLAPSE,	/* Window collapse by peer 67 */
-	TCP_RACK_TP_TRIGGERED,	/* A rack tracepoint is triggered 68 */
-	TCP_HYBRID_PACING_LOG,	/* Hybrid pacing log 69 */
+	TCP_HYSTART,		/* TCP Hystart logging              65 */
+	TCP_CHG_QUERY,		/* Change query during fnc_init()   66 */
+	TCP_RACK_LOG_COLLAPSE,	/* Window collapse by peer          67 */
+	TCP_RACK_TP_TRIGGERED,	/* A rack tracepoint is triggered   68 */
+	TCP_HYBRID_PACING_LOG,	/* Hybrid pacing log                69 */
 	TCP_LOG_PRU,		/* TCP protocol user request        70 */
 	TCP_LOG_END		/* End (keep at end)                71 */
 };

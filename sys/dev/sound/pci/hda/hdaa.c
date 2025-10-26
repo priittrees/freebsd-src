@@ -267,7 +267,8 @@ hdaa_channels_handler(struct hdaa_audio_as *as)
 	struct hdaa_chan *ch = &devinfo->chans[as->chans[0]];
 	struct hdaa_widget *w;
 	uint8_t *eld;
-	int i, total, sub, assume, channels;
+	int total, sub, assume, channels;
+	size_t i;
 	uint16_t cpins, upins, tpins;
 
 	cpins = upins = 0;
@@ -347,7 +348,7 @@ hdaa_channels_handler(struct hdaa_audio_as *as)
 			printf("\n");
 		);
 		/* Look for maximal fitting matrix. */
-		for (i = 0; i < sizeof(matrixes) / sizeof(struct matrix); i++) {
+		for (i = 0; i < nitems(matrixes); i++) {
 			if (as->pinset != 0 && matrixes[i].analog == 0)
 				continue;
 			if ((matrixes[i].m.mask & ~channels) == 0) {
@@ -1252,7 +1253,8 @@ hdaa_sysctl_config(SYSCTL_HANDLER_ARGS)
 static void
 hdaa_config_fetch(const char *str, uint32_t *on, uint32_t *off)
 {
-	int i = 0, j, k, len, inv;
+	size_t k;
+	int i = 0, j, len, inv;
 
 	for (;;) {
 		while (str[i] != '\0' &&
@@ -1292,7 +1294,8 @@ static int
 hdaa_sysctl_quirks(SYSCTL_HANDLER_ARGS)
 {
 	char buf[256];
-	int error, n = 0, i;
+	int error, n = 0;
+	size_t i;
 	uint32_t quirks, quirks_off;
 
 	quirks = *(uint32_t *)oidp->oid_arg1;
@@ -3030,8 +3033,7 @@ hdaa_audio_ctl_parse(struct hdaa_devinfo *devinfo)
 	if (max < 1)
 		return;
 
-	ctls = (struct hdaa_audio_ctl *)malloc(
-	    sizeof(*ctls) * max, M_HDAA, M_ZERO | M_NOWAIT);
+	ctls = malloc(sizeof(*ctls) * max, M_HDAA, M_ZERO | M_NOWAIT);
 
 	if (ctls == NULL) {
 		/* Blekh! */
@@ -3183,8 +3185,7 @@ hdaa_audio_as_parse(struct hdaa_devinfo *devinfo)
 	if (max < 1)
 		return;
 
-	as = (struct hdaa_audio_as *)malloc(
-	    sizeof(*as) * max, M_HDAA, M_ZERO | M_NOWAIT);
+	as = malloc(sizeof(*as) * max, M_HDAA, M_ZERO | M_NOWAIT);
 
 	if (as == NULL) {
 		/* Blekh! */
@@ -3217,7 +3218,7 @@ hdaa_audio_as_parse(struct hdaa_devinfo *devinfo)
 				continue;
 			}
 			KASSERT(cnt < max,
-			    ("%s: Associations owerflow (%d of %d)",
+			    ("%s: Associations overflow (%d of %d)",
 			    __func__, cnt, max));
 			type = w->wclass.pin.config &
 			    HDA_CONFIG_DEFAULTCONF_DEVICE_MASK;
@@ -4074,8 +4075,7 @@ hdaa_audio_bind_as(struct hdaa_devinfo *devinfo)
 			cnt += as[j].num_chans;
 	}
 	if (devinfo->num_chans == 0) {
-		devinfo->chans = (struct hdaa_chan *)malloc(
-		    sizeof(struct hdaa_chan) * cnt,
+		devinfo->chans = malloc(sizeof(struct hdaa_chan) * cnt,
 		    M_HDAA, M_ZERO | M_NOWAIT);
 		if (devinfo->chans == NULL) {
 			device_printf(devinfo->dev,
@@ -5487,10 +5487,8 @@ hdaa_prepare_pcms(struct hdaa_devinfo *devinfo)
 	}
 	devinfo->num_devs =
 	    max(ardev, apdev) + max(drdev, dpdev);
-	devinfo->devs =
-	    (struct hdaa_pcm_devinfo *)malloc(
-	    devinfo->num_devs * sizeof(struct hdaa_pcm_devinfo),
-	    M_HDAA, M_ZERO | M_NOWAIT);
+	devinfo->devs = malloc(devinfo->num_devs *
+	    sizeof(struct hdaa_pcm_devinfo), M_HDAA, M_ZERO | M_NOWAIT);
 	if (devinfo->devs == NULL) {
 		device_printf(devinfo->dev,
 		    "Unable to allocate memory for devices\n");
@@ -6202,7 +6200,9 @@ hdaa_configure(device_t dev)
 	HDA_BOOTHVERBOSE(
 		device_printf(dev, "Creating PCM devices...\n");
 	);
+	hdaa_unlock(devinfo);
 	hdaa_create_pcms(devinfo);
+	hdaa_lock(devinfo);
 
 	HDA_BOOTVERBOSE(
 		if (devinfo->quirks != 0) {
@@ -6622,9 +6622,8 @@ hdaa_attach(device_t dev)
 	);
 
 	if (devinfo->nodecnt > 0)
-		devinfo->widget = (struct hdaa_widget *)malloc(
-		    sizeof(*(devinfo->widget)) * devinfo->nodecnt, M_HDAA,
-		    M_WAITOK | M_ZERO);
+		devinfo->widget = malloc(sizeof(*(devinfo->widget)) *
+		    devinfo->nodecnt, M_HDAA, M_WAITOK | M_ZERO);
 	else
 		devinfo->widget = NULL;
 

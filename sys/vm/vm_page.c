@@ -459,7 +459,8 @@ vm_page_domain_init(int domain)
 	vmd->vmd_page_count = 0;
 	vmd->vmd_free_count = 0;
 	vmd->vmd_segs = 0;
-	vmd->vmd_oom = FALSE;
+	vmd->vmd_oom = false;
+	vmd->vmd_helper_threads_enabled = true;
 	for (i = 0; i < PQ_COUNT; i++) {
 		pq = &vmd->vmd_pagequeues[i];
 		TAILQ_INIT(&pq->pq_pl);
@@ -649,40 +650,39 @@ vm_page_startup(vm_offset_t vaddr)
 		pa += PAGE_SIZE;
 	}
 #endif
+
 	/*
-	 * Compute the number of pages of memory that will be available for
-	 * use, taking into account the overhead of a page structure per page.
-	 * In other words, solve
-	 *	"available physical memory" - round_page(page_range *
-	 *	    sizeof(struct vm_page)) = page_range * PAGE_SIZE 
-	 * for page_range.  
+	 * Determine the lowest and highest physical addresses and, in the case
+	 * of VM_PHYSSEG_SPARSE, the exact size of the available physical
+	 * memory.  vm_phys_early_startup() already checked that phys_avail[]
+	 * has at least one element.
 	 */
+#ifdef VM_PHYSSEG_SPARSE
+	size = phys_avail[1] - phys_avail[0];
+#endif
 	low_avail = phys_avail[0];
 	high_avail = phys_avail[1];
-	for (i = 0; i < vm_phys_nsegs; i++) {
-		if (vm_phys_segs[i].start < low_avail)
-			low_avail = vm_phys_segs[i].start;
-		if (vm_phys_segs[i].end > high_avail)
-			high_avail = vm_phys_segs[i].end;
-	}
-	/* Skip the first chunk.  It is already accounted for. */
 	for (i = 2; phys_avail[i + 1] != 0; i += 2) {
+#ifdef VM_PHYSSEG_SPARSE
+		size += phys_avail[i + 1] - phys_avail[i];
+#endif
 		if (phys_avail[i] < low_avail)
 			low_avail = phys_avail[i];
 		if (phys_avail[i + 1] > high_avail)
 			high_avail = phys_avail[i + 1];
 	}
-	first_page = low_avail / PAGE_SIZE;
+	for (i = 0; i < vm_phys_nsegs; i++) {
 #ifdef VM_PHYSSEG_SPARSE
-	size = 0;
-	for (i = 0; i < vm_phys_nsegs; i++)
 		size += vm_phys_segs[i].end - vm_phys_segs[i].start;
-	for (i = 0; phys_avail[i + 1] != 0; i += 2)
-		size += phys_avail[i + 1] - phys_avail[i];
-#elif defined(VM_PHYSSEG_DENSE)
+#endif
+		if (vm_phys_segs[i].start < low_avail)
+			low_avail = vm_phys_segs[i].start;
+		if (vm_phys_segs[i].end > high_avail)
+			high_avail = vm_phys_segs[i].end;
+	}
+	first_page = low_avail / PAGE_SIZE;
+#ifdef VM_PHYSSEG_DENSE
 	size = high_avail - low_avail;
-#else
-#error "Either VM_PHYSSEG_DENSE or VM_PHYSSEG_SPARSE must be defined."
 #endif
 
 #ifdef PMAP_HAS_PAGE_ARRAY
@@ -745,8 +745,7 @@ vm_page_startup(vm_offset_t vaddr)
 	 * physical pages.
 	 */
 	for (i = 0; phys_avail[i + 1] != 0; i += 2)
-		if (vm_phys_avail_size(i) != 0)
-			vm_phys_add_seg(phys_avail[i], phys_avail[i + 1]);
+		vm_phys_add_seg(phys_avail[i], phys_avail[i + 1]);
 
 	/*
 	 * Initialize the physical memory allocator.
@@ -1834,15 +1833,10 @@ vm_page_replace(vm_page_t mnew, vm_object_t object, vm_pindex_t pindex,
  *	Move the given memory entry from its
  *	current object to the specified target object/offset.
  *
- *	Note: swap associated with the page must be invalidated by the move.  We
- *	      have to do this for several reasons:  (1) we aren't freeing the
- *	      page, (2) we are dirtying the page, (3) the VM system is probably
- *	      moving the page from object A to B, and will then later move
- *	      the backing store from A to B and we can't have a conflict.
- *
- *	Note: we *always* dirty the page.  It is necessary both for the
- *	      fact that we moved it, and because we may be invalidating
- *	      swap.
+ *	This routine dirties the page if it is valid, as callers are expected to
+ *	transfer backing storage only after moving the page.  Dirtying the page
+ *	ensures that the destination object retains the most recent copy of the
+ *	page.
  *
  *	The objects must be locked.
  */
@@ -1883,7 +1877,8 @@ vm_page_rename(vm_page_t m, vm_object_t new_object, vm_pindex_t new_pindex)
 	m->object = new_object;
 
 	vm_page_insert_radixdone(m, new_object, mpred);
-	vm_page_dirty(m);
+	if (vm_page_any_valid(m))
+		vm_page_dirty(m);
 	vm_pager_page_inserted(new_object, m);
 	return (0);
 }
@@ -1972,7 +1967,7 @@ _vm_domain_allocate(struct vm_domain *vmd, int req_class, int npages)
 	 * Attempt to reserve the pages.  Fail if we're below the limit.
 	 */
 	limit += npages;
-	old = vmd->vmd_free_count;
+	old = atomic_load_int(&vmd->vmd_free_count);
 	do {
 		if (old < limit)
 			return (0);
@@ -3993,14 +3988,14 @@ vm_page_free_toq(vm_page_t m)
  *	from any VM object.  In other words, this is equivalent to
  *	calling vm_page_free_toq() for each page of a list of VM objects.
  */
-void
+int
 vm_page_free_pages_toq(struct spglist *free, bool update_wire_count)
 {
 	vm_page_t m;
 	int count;
 
 	if (SLIST_EMPTY(free))
-		return;
+		return (0);
 
 	count = 0;
 	while ((m = SLIST_FIRST(free)) != NULL) {
@@ -4011,6 +4006,7 @@ vm_page_free_pages_toq(struct spglist *free, bool update_wire_count)
 
 	if (update_wire_count)
 		vm_wire_sub(count);
+	return (count);
 }
 
 /*
@@ -4053,7 +4049,7 @@ vm_page_wire_mapped(vm_page_t m)
 {
 	u_int old;
 
-	old = m->ref_count;
+	old = atomic_load_int(&m->ref_count);
 	do {
 		KASSERT(old > 0,
 		    ("vm_page_wire_mapped: wiring unreferenced page %p", m));
@@ -4087,12 +4083,15 @@ vm_page_unwire_managed(vm_page_t m, uint8_t nqueue, bool noreuse)
 	 * Use a release store when updating the reference count to
 	 * synchronize with vm_page_free_prep().
 	 */
-	old = m->ref_count;
+	old = atomic_load_int(&m->ref_count);
 	do {
+		u_int count;
+
 		KASSERT(VPRC_WIRE_COUNT(old) > 0,
 		    ("vm_page_unwire: wire count underflow for page %p", m));
 
-		if (old > VPRC_OBJREF + 1) {
+		count = old & ~VPRC_BLOCKED;
+		if (count > VPRC_OBJREF + 1) {
 			/*
 			 * The page has at least one other wiring reference.  An
 			 * earlier iteration of this loop may have called
@@ -4101,7 +4100,7 @@ vm_page_unwire_managed(vm_page_t m, uint8_t nqueue, bool noreuse)
 			 */
 			if ((vm_page_astate_load(m).flags & PGA_DEQUEUE) == 0)
 				vm_page_aflag_set(m, PGA_DEQUEUE);
-		} else if (old == VPRC_OBJREF + 1) {
+		} else if (count == VPRC_OBJREF + 1) {
 			/*
 			 * This is the last wiring.  Clear PGA_DEQUEUE and
 			 * update the page's queue state to reflect the
@@ -4110,7 +4109,7 @@ vm_page_unwire_managed(vm_page_t m, uint8_t nqueue, bool noreuse)
 			 * clear leftover queue state.
 			 */
 			vm_page_release_toq(m, nqueue, noreuse);
-		} else if (old == 1) {
+		} else if (count == 1) {
 			vm_page_aflag_clear(m, PGA_DEQUEUE);
 		}
 	} while (!atomic_fcmpset_rel_int(&m->ref_count, &old, old - 1));
@@ -4382,10 +4381,12 @@ vm_page_try_blocked_op(vm_page_t m, void (*op)(vm_page_t))
 	    ("vm_page_try_blocked_op: page %p is not busy", m));
 	VM_OBJECT_ASSERT_LOCKED(m->object);
 
-	old = m->ref_count;
+	old = atomic_load_int(&m->ref_count);
 	do {
 		KASSERT(old != 0,
 		    ("vm_page_try_blocked_op: page %p has no references", m));
+		KASSERT((old & VPRC_BLOCKED) == 0,
+		    ("vm_page_try_blocked_op: page %p blocks wirings", m));
 		if (VPRC_WIRE_COUNT(old) != 0)
 			return (false);
 	} while (!atomic_fcmpset_int(&m->ref_count, &old, old | VPRC_BLOCKED));

@@ -60,7 +60,7 @@ static void print_cpu_caches(struct sbuf *sb, struct cpu_desc *desc);
 static u_long parse_cpu_features_hwcap32(void);
 #endif
 
-char machine[] = "arm64";
+const char machine[] = "arm64";
 
 #ifdef SCTL_MASK32
 extern int adaptive_machine_arch;
@@ -139,15 +139,11 @@ struct cpu_desc {
 	uint64_t	id_aa64mmfr0;
 	uint64_t	id_aa64mmfr1;
 	uint64_t	id_aa64mmfr2;
-#ifdef NOTYET
 	uint64_t	id_aa64mmfr3;
 	uint64_t	id_aa64mmfr4;
-#endif
 	uint64_t	id_aa64pfr0;
 	uint64_t	id_aa64pfr1;
-#ifdef NOTYET
 	uint64_t	id_aa64pfr2;
-#endif
 	uint64_t	id_aa64zfr0;
 	uint64_t	ctr;
 #ifdef COMPAT_FREEBSD32
@@ -947,6 +943,11 @@ static const struct mrs_field_value id_aa64isar2_rpres[] = {
 	MRS_FIELD_VALUE_END,
 };
 
+static const struct mrs_field_hwcap id_aa64isar2_rpres_caps[] = {
+	MRS_HWCAP(2, HWCAP2_RPRES, ID_AA64ISAR2_RPRES_IMPL),
+	MRS_HWCAP_END
+};
+
 static const struct mrs_field_value id_aa64isar2_wfxt[] = {
 	MRS_FIELD_VALUE_NONE_IMPL(ID_AA64ISAR2, WFxT, NONE, IMPL),
 	MRS_FIELD_VALUE_END,
@@ -961,7 +962,8 @@ static const struct mrs_field id_aa64isar2_fields[] = {
 	    id_aa64isar2_apa3, id_aa64isar2_apa3_caps),
 	MRS_FIELD_HWCAP(ID_AA64ISAR2, GPA3, false, MRS_EXACT,
 	    id_aa64isar2_gpa3, id_aa64isar2_gpa3_caps),
-	MRS_FIELD(ID_AA64ISAR2, RPRES, false, MRS_EXACT, id_aa64isar2_rpres),
+	MRS_FIELD_HWCAP(ID_AA64ISAR2, RPRES, false, MRS_LOWER,
+	    id_aa64isar2_rpres, id_aa64isar2_rpres_caps),
 	MRS_FIELD(ID_AA64ISAR2, WFxT, false, MRS_EXACT, id_aa64isar2_wfxt),
 	MRS_FIELD_END,
 };
@@ -1104,6 +1106,11 @@ static const struct mrs_field_value id_aa64mmfr1_afp[] = {
 	MRS_FIELD_VALUE_END,
 };
 
+static const struct mrs_field_hwcap id_aa64mmfr1_afp_caps[] = {
+	MRS_HWCAP(2, HWCAP2_AFP, ID_AA64MMFR1_AFP_IMPL),
+	MRS_HWCAP_END
+};
+
 static const struct mrs_field_value id_aa64mmfr1_hcx[] = {
 	MRS_FIELD_VALUE_NONE_IMPL(ID_AA64MMFR1, HCX, NONE, IMPL),
 	MRS_FIELD_VALUE_END,
@@ -1170,7 +1177,8 @@ static const struct mrs_field id_aa64mmfr1_fields[] = {
 	MRS_FIELD(ID_AA64MMFR1, CMOVW, false, MRS_EXACT, id_aa64mmfr1_cmovw),
 	MRS_FIELD(ID_AA64MMFR1, TIDCP1, false, MRS_EXACT, id_aa64mmfr1_tidcp1),
 	MRS_FIELD(ID_AA64MMFR1, nTLBPA, false, MRS_EXACT, id_aa64mmfr1_ntlbpa),
-	MRS_FIELD(ID_AA64MMFR1, AFP, false, MRS_EXACT, id_aa64mmfr1_afp),
+	MRS_FIELD_HWCAP(ID_AA64MMFR1, AFP, false, MRS_LOWER, id_aa64mmfr1_afp,
+	    id_aa64mmfr1_afp_caps),
 	MRS_FIELD(ID_AA64MMFR1, HCX, false, MRS_EXACT, id_aa64mmfr1_hcx),
 	MRS_FIELD(ID_AA64MMFR1, ETS, false, MRS_EXACT, id_aa64mmfr1_ets),
 	MRS_FIELD(ID_AA64MMFR1, TWED, false, MRS_EXACT, id_aa64mmfr1_twed),
@@ -1298,7 +1306,6 @@ static const struct mrs_field id_aa64mmfr2_fields[] = {
 };
 
 
-#ifdef NOTYET
 /* ID_AA64MMFR2_EL1 */
 static const struct mrs_field_value id_aa64mmfr3_spec_fpacc[] = {
 	MRS_FIELD_VALUE_NONE_IMPL(ID_AA64MMFR3, Spec_FPACC, NONE, IMPL),
@@ -1334,7 +1341,6 @@ static const struct mrs_field id_aa64mmfr3_fields[] = {
 static const struct mrs_field id_aa64mmfr4_fields[] = {
 	MRS_FIELD_END,
 };
-#endif
 
 
 /* ID_AA64PFR0_EL1 */
@@ -1390,13 +1396,10 @@ static const struct mrs_field_value id_aa64pfr0_sve[] = {
 	MRS_FIELD_VALUE_END,
 };
 
-#if 0
-/* Enable when we add SVE support */
 static const struct mrs_field_hwcap id_aa64pfr0_sve_caps[] = {
 	MRS_HWCAP(1, HWCAP_SVE, ID_AA64PFR0_SVE_IMPL),
 	MRS_HWCAP_END
 };
-#endif
 
 static const struct mrs_field_value id_aa64pfr0_ras[] = {
 	MRS_FIELD_VALUE(ID_AA64PFR0_RAS_NONE, ""),
@@ -1470,7 +1473,8 @@ static const struct mrs_field id_aa64pfr0_fields[] = {
 	MRS_FIELD(ID_AA64PFR0, AMU, false, MRS_EXACT, id_aa64pfr0_amu),
 	MRS_FIELD(ID_AA64PFR0, MPAM, false, MRS_EXACT, id_aa64pfr0_mpam),
 	MRS_FIELD(ID_AA64PFR0, SEL2, false, MRS_EXACT, id_aa64pfr0_sel2),
-	MRS_FIELD(ID_AA64PFR0, SVE, false, MRS_EXACT, id_aa64pfr0_sve),
+	MRS_FIELD_HWCAP_SPLIT(ID_AA64PFR0, SVE, false, MRS_LOWER, MRS_EXACT,
+	    id_aa64pfr0_sve, id_aa64pfr0_sve_caps),
 	MRS_FIELD(ID_AA64PFR0, RAS, false, MRS_EXACT, id_aa64pfr0_ras),
 	MRS_FIELD(ID_AA64PFR0, GIC, false, MRS_EXACT, id_aa64pfr0_gic),
 	MRS_FIELD_HWCAP(ID_AA64PFR0, AdvSIMD, true, MRS_LOWER,
@@ -1575,12 +1579,10 @@ static const struct mrs_field id_aa64pfr1_fields[] = {
 };
 
 
-#ifdef NOTYET
 /* ID_AA64PFR2_EL1 */
 static const struct mrs_field id_aa64pfr2_fields[] = {
 	MRS_FIELD_END,
 };
-#endif
 
 
 /* ID_AA64ZFR0_EL1 */
@@ -1589,9 +1591,19 @@ static const struct mrs_field_value id_aa64zfr0_f64mm[] = {
 	MRS_FIELD_VALUE_END,
 };
 
+static const struct mrs_field_hwcap id_aa64zfr0_f64mm_caps[] = {
+	MRS_HWCAP(2, HWCAP2_SVEF64MM, ID_AA64ZFR0_F64MM_IMPL),
+	MRS_HWCAP_END,
+};
+
 static const struct mrs_field_value id_aa64zfr0_f32mm[] = {
 	MRS_FIELD_VALUE_NONE_IMPL(ID_AA64ZFR0, F32MM, NONE, IMPL),
 	MRS_FIELD_VALUE_END,
+};
+
+static const struct mrs_field_hwcap id_aa64zfr0_f32mm_caps[] = {
+	MRS_HWCAP(2, HWCAP2_SVEF32MM, ID_AA64ZFR0_F32MM_IMPL),
+	MRS_HWCAP_END,
 };
 
 static const struct mrs_field_value id_aa64zfr0_i8mm[] = {
@@ -1599,14 +1611,29 @@ static const struct mrs_field_value id_aa64zfr0_i8mm[] = {
 	MRS_FIELD_VALUE_END,
 };
 
+static const struct mrs_field_hwcap id_aa64zfr0_i8mm_caps[] = {
+	MRS_HWCAP(2, HWCAP2_SVEI8MM, ID_AA64ZFR0_I8MM_IMPL),
+	MRS_HWCAP_END,
+};
+
 static const struct mrs_field_value id_aa64zfr0_sm4[] = {
 	MRS_FIELD_VALUE_NONE_IMPL(ID_AA64ZFR0, SM4, NONE, IMPL),
 	MRS_FIELD_VALUE_END,
 };
 
+static const struct mrs_field_hwcap id_aa64zfr0_sm4_caps[] = {
+	MRS_HWCAP(2, HWCAP2_SVESM4, ID_AA64ZFR0_SM4_IMPL),
+	MRS_HWCAP_END,
+};
+
 static const struct mrs_field_value id_aa64zfr0_sha3[] = {
 	MRS_FIELD_VALUE_NONE_IMPL(ID_AA64ZFR0, SHA3, NONE, IMPL),
 	MRS_FIELD_VALUE_END,
+};
+
+static const struct mrs_field_hwcap id_aa64zfr0_sha3_caps[] = {
+	MRS_HWCAP(2, HWCAP2_SVESHA3, ID_AA64ZFR0_SHA3_IMPL),
+	MRS_HWCAP_END,
 };
 
 static const struct mrs_field_value id_aa64zfr0_bf16[] = {
@@ -1615,9 +1642,20 @@ static const struct mrs_field_value id_aa64zfr0_bf16[] = {
 	MRS_FIELD_VALUE_END,
 };
 
+static const struct mrs_field_hwcap id_aa64zfr0_bf16_caps[] = {
+	MRS_HWCAP(2, HWCAP2_SVEBF16, ID_AA64ZFR0_BF16_BASE),
+	MRS_HWCAP(2, HWCAP2_SVE_EBF16, ID_AA64ZFR0_BF16_EBF),
+	MRS_HWCAP_END,
+};
+
 static const struct mrs_field_value id_aa64zfr0_bitperm[] = {
 	MRS_FIELD_VALUE_NONE_IMPL(ID_AA64ZFR0, BitPerm, NONE, IMPL),
 	MRS_FIELD_VALUE_END,
+};
+
+static const struct mrs_field_hwcap id_aa64zfr0_bitperm_caps[] = {
+	MRS_HWCAP(2, HWCAP2_SVEBITPERM, ID_AA64ZFR0_BitPerm_IMPL),
+	MRS_HWCAP_END,
 };
 
 static const struct mrs_field_value id_aa64zfr0_aes[] = {
@@ -1626,22 +1664,44 @@ static const struct mrs_field_value id_aa64zfr0_aes[] = {
 	MRS_FIELD_VALUE_END,
 };
 
+static const struct mrs_field_hwcap id_aa64zfr0_aes_caps[] = {
+	MRS_HWCAP(2, HWCAP2_SVEAES, ID_AA64ZFR0_AES_BASE),
+	MRS_HWCAP(2, HWCAP2_SVEPMULL, ID_AA64ZFR0_AES_PMULL),
+	MRS_HWCAP_END,
+};
+
 static const struct mrs_field_value id_aa64zfr0_svever[] = {
 	MRS_FIELD_VALUE(ID_AA64ZFR0_SVEver_SVE1, "SVE1"),
 	MRS_FIELD_VALUE(ID_AA64ZFR0_SVEver_SVE2, "SVE2"),
+	MRS_FIELD_VALUE(ID_AA64ZFR0_SVEver_SVE2P1, "SVE2P1"),
 	MRS_FIELD_VALUE_END,
 };
 
+static const struct mrs_field_hwcap id_aa64zfr0_svever_caps[] = {
+	MRS_HWCAP(2, HWCAP2_SVE2, ID_AA64ZFR0_SVEver_SVE2),
+	MRS_HWCAP(2, HWCAP2_SVE2P1, ID_AA64ZFR0_SVEver_SVE2P1),
+	MRS_HWCAP_END,
+};
+
 static const struct mrs_field id_aa64zfr0_fields[] = {
-	MRS_FIELD(ID_AA64ZFR0, F64MM, false, MRS_EXACT, id_aa64zfr0_f64mm),
-	MRS_FIELD(ID_AA64ZFR0, F32MM, false, MRS_EXACT, id_aa64zfr0_f32mm),
-	MRS_FIELD(ID_AA64ZFR0, I8MM, false, MRS_EXACT, id_aa64zfr0_i8mm),
-	MRS_FIELD(ID_AA64ZFR0, SM4, false, MRS_EXACT, id_aa64zfr0_sm4),
-	MRS_FIELD(ID_AA64ZFR0, SHA3, false, MRS_EXACT, id_aa64zfr0_sha3),
-	MRS_FIELD(ID_AA64ZFR0, BF16, false, MRS_EXACT, id_aa64zfr0_bf16),
-	MRS_FIELD(ID_AA64ZFR0, BitPerm, false, MRS_EXACT, id_aa64zfr0_bitperm),
-	MRS_FIELD(ID_AA64ZFR0, AES, false, MRS_EXACT, id_aa64zfr0_aes),
-	MRS_FIELD(ID_AA64ZFR0, SVEver, false, MRS_EXACT, id_aa64zfr0_svever),
+	MRS_FIELD_HWCAP(ID_AA64ZFR0, F64MM, false, MRS_LOWER,
+	    id_aa64zfr0_f64mm, id_aa64zfr0_f64mm_caps),
+	MRS_FIELD_HWCAP(ID_AA64ZFR0, F32MM, false, MRS_LOWER,
+	    id_aa64zfr0_f32mm, id_aa64zfr0_f32mm_caps),
+	MRS_FIELD_HWCAP(ID_AA64ZFR0, I8MM, false, MRS_LOWER, id_aa64zfr0_i8mm,
+	    id_aa64zfr0_i8mm_caps),
+	MRS_FIELD_HWCAP(ID_AA64ZFR0, SM4, false, MRS_LOWER, id_aa64zfr0_sm4,
+	    id_aa64zfr0_sm4_caps),
+	MRS_FIELD_HWCAP(ID_AA64ZFR0, SHA3, false, MRS_LOWER, id_aa64zfr0_sha3,
+	    id_aa64zfr0_sha3_caps),
+	MRS_FIELD_HWCAP(ID_AA64ZFR0, BF16, false, MRS_LOWER, id_aa64zfr0_bf16,
+	    id_aa64zfr0_bf16_caps),
+	MRS_FIELD_HWCAP(ID_AA64ZFR0, BitPerm, false, MRS_LOWER,
+	    id_aa64zfr0_bitperm, id_aa64zfr0_bitperm_caps),
+	MRS_FIELD_HWCAP(ID_AA64ZFR0, AES, false, MRS_LOWER, id_aa64zfr0_aes,
+	    id_aa64zfr0_aes_caps),
+	MRS_FIELD_HWCAP(ID_AA64ZFR0, SVEver, false, MRS_LOWER,
+	    id_aa64zfr0_svever, id_aa64zfr0_svever_caps),
 	MRS_FIELD_END,
 };
 
@@ -1883,16 +1943,12 @@ static const struct mrs_user_reg user_regs[] = {
 	USER_REG(ID_AA64MMFR0_EL1, id_aa64mmfr0, true),
 	USER_REG(ID_AA64MMFR1_EL1, id_aa64mmfr1, true),
 	USER_REG(ID_AA64MMFR2_EL1, id_aa64mmfr2, true),
-#ifdef NOTYET
 	USER_REG(ID_AA64MMFR3_EL1, id_aa64mmfr3, true),
 	USER_REG(ID_AA64MMFR4_EL1, id_aa64mmfr4, true),
-#endif
 
 	USER_REG(ID_AA64PFR0_EL1, id_aa64pfr0, true),
 	USER_REG(ID_AA64PFR1_EL1, id_aa64pfr1, true),
-#ifdef NOTYET
 	USER_REG(ID_AA64PFR2_EL1, id_aa64pfr2, true),
-#endif
 
 	USER_REG(ID_AA64ZFR0_EL1, id_aa64zfr0, true),
 
@@ -2672,12 +2728,10 @@ print_cpu_features(u_int cpu, struct cpu_desc *desc,
 		print_id_register(sb, "Processor Features 1",
 		    desc->id_aa64pfr1, id_aa64pfr1_fields);
 
-#ifdef NOTYET
 	/* AArch64 Processor Feature Register 2 */
 	if (SHOULD_PRINT_REG(id_aa64pfr2))
 		print_id_register(sb, "Processor Features 2",
 		    desc->id_aa64pfr2, id_aa64pfr2_fields);
-#endif
 
 	/* AArch64 Memory Model Feature Register 0 */
 	if (SHOULD_PRINT_REG(id_aa64mmfr0))
@@ -2694,7 +2748,6 @@ print_cpu_features(u_int cpu, struct cpu_desc *desc,
 		print_id_register(sb, "Memory Model Features 2",
 		    desc->id_aa64mmfr2, id_aa64mmfr2_fields);
 
-#ifdef NOTYET
 	/* AArch64 Memory Model Feature Register 3 */
 	if (SHOULD_PRINT_REG(id_aa64mmfr3))
 		print_id_register(sb, "Memory Model Features 3",
@@ -2704,7 +2757,6 @@ print_cpu_features(u_int cpu, struct cpu_desc *desc,
 	if (SHOULD_PRINT_REG(id_aa64mmfr4))
 		print_id_register(sb, "Memory Model Features 4",
 		    desc->id_aa64mmfr4, id_aa64mmfr4_fields);
-#endif
 
 	/* AArch64 Debug Feature Register 0 */
 	if (SHOULD_PRINT_REG(id_aa64dfr0))
@@ -2812,23 +2864,19 @@ identify_cpu(u_int cpu)
 	CPU_AFFINITY(cpu) = desc->mpidr & CPU_AFF_MASK;
 
 	desc->ctr = READ_SPECIALREG(ctr_el0);
-	desc->id_aa64dfr0 = READ_SPECIALREG(id_aa64dfr0_el1);
-	desc->id_aa64dfr1 = READ_SPECIALREG(id_aa64dfr1_el1);
-	desc->id_aa64isar0 = READ_SPECIALREG(id_aa64isar0_el1);
-	desc->id_aa64isar1 = READ_SPECIALREG(id_aa64isar1_el1);
-	desc->id_aa64isar2 = READ_SPECIALREG(id_aa64isar2_el1);
-	desc->id_aa64mmfr0 = READ_SPECIALREG(id_aa64mmfr0_el1);
-	desc->id_aa64mmfr1 = READ_SPECIALREG(id_aa64mmfr1_el1);
-	desc->id_aa64mmfr2 = READ_SPECIALREG(id_aa64mmfr2_el1);
-#ifdef NOTYET
-	desc->id_aa64mmfr3 = READ_SPECIALREG(id_aa64mmfr3_el1);
-	desc->id_aa64mmfr4 = READ_SPECIALREG(id_aa64mmfr4_el1);
-#endif
-	desc->id_aa64pfr0 = READ_SPECIALREG(id_aa64pfr0_el1);
-	desc->id_aa64pfr1 = READ_SPECIALREG(id_aa64pfr1_el1);
-#ifdef NOTYET
-	desc->id_aa64pfr2 = READ_SPECIALREG(id_aa64pfr2_el1);
-#endif
+	desc->id_aa64dfr0 = READ_SPECIALREG(ID_AA64DFR0_EL1_REG);
+	desc->id_aa64dfr1 = READ_SPECIALREG(ID_AA64DFR1_EL1_REG);
+	desc->id_aa64isar0 = READ_SPECIALREG(ID_AA64ISAR0_EL1_REG);
+	desc->id_aa64isar1 = READ_SPECIALREG(ID_AA64ISAR1_EL1_REG);
+	desc->id_aa64isar2 = READ_SPECIALREG(ID_AA64ISAR2_EL1_REG);
+	desc->id_aa64mmfr0 = READ_SPECIALREG(ID_AA64MMFR0_EL1_REG);
+	desc->id_aa64mmfr1 = READ_SPECIALREG(ID_AA64MMFR1_EL1_REG);
+	desc->id_aa64mmfr2 = READ_SPECIALREG(ID_AA64MMFR2_EL1_REG);
+	desc->id_aa64mmfr3 = READ_SPECIALREG(ID_AA64MMFR3_EL1_REG);
+	desc->id_aa64mmfr4 = READ_SPECIALREG(ID_AA64MMFR4_EL1_REG);
+	desc->id_aa64pfr0 = READ_SPECIALREG(ID_AA64PFR0_EL1_REG);
+	desc->id_aa64pfr1 = READ_SPECIALREG(ID_AA64PFR1_EL1_REG);
+	desc->id_aa64pfr2 = READ_SPECIALREG(ID_AA64PFR2_EL1_REG);
 
 	/*
 	 * ID_AA64ZFR0_EL1 is only valid when at least one of:

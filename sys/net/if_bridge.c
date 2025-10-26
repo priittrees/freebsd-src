@@ -193,7 +193,7 @@
  * List of capabilities to possibly mask on the member interface.
  */
 #define	BRIDGE_IFCAPS_MASK		(IFCAP_TOE|IFCAP_TSO|IFCAP_TXCSUM|\
-					 IFCAP_TXCSUM_IPV6)
+					 IFCAP_TXCSUM_IPV6|IFCAP_MEXTPG)
 
 /*
  * List of capabilities to strip
@@ -403,12 +403,14 @@ static int	bridge_ioctl_sproto(struct bridge_softc *, void *);
 static int	bridge_ioctl_stxhc(struct bridge_softc *, void *);
 static int	bridge_pfil(struct mbuf **, struct ifnet *, struct ifnet *,
 		    int);
+#ifdef INET
 static int	bridge_ip_checkbasic(struct mbuf **mp);
+static int	bridge_fragment(struct ifnet *, struct mbuf **mp,
+		    struct ether_header *, int, struct llc *);
+#endif /* INET */
 #ifdef INET6
 static int	bridge_ip6_checkbasic(struct mbuf **mp);
 #endif /* INET6 */
-static int	bridge_fragment(struct ifnet *, struct mbuf **mp,
-		    struct ether_header *, int, struct llc *);
 static void	bridge_linkstate(struct ifnet *ifp);
 static void	bridge_linkcheck(struct bridge_softc *sc);
 
@@ -600,7 +602,8 @@ static const struct bridge_control bridge_control_table[] = {
 };
 static const int bridge_control_table_size = nitems(bridge_control_table);
 
-VNET_DEFINE_STATIC(LIST_HEAD(, bridge_softc), bridge_list);
+VNET_DEFINE_STATIC(LIST_HEAD(, bridge_softc), bridge_list) =
+    LIST_HEAD_INITIALIZER();
 #define	V_bridge_list	VNET(bridge_list)
 #define	BRIDGE_LIST_LOCK_INIT(x)	sx_init(&V_bridge_list_sx,	\
 					    "if_bridge list")
@@ -621,7 +624,6 @@ vnet_bridge_init(const void *unused __unused)
 	    sizeof(struct bridge_rtnode), NULL, NULL, NULL, NULL,
 	    UMA_ALIGN_PTR, 0);
 	BRIDGE_LIST_LOCK_INIT();
-	LIST_INIT(&V_bridge_list);
 
 	struct if_clone_addreq req = {
 		.create_f = bridge_clone_create,
@@ -752,10 +754,6 @@ bridge_clone_create(struct if_clone *ifc, char *name, size_t len,
 
 	sc = malloc(sizeof(*sc), M_DEVBUF, M_WAITOK|M_ZERO);
 	ifp = sc->sc_ifp = if_alloc(IFT_ETHER);
-	if (ifp == NULL) {
-		free(sc, M_DEVBUF);
-		return (ENOSPC);
-	}
 
 	BRIDGE_LOCK_INIT(sc);
 	sc->sc_brtmax = BRIDGE_RTABLE_MAX;
@@ -3390,12 +3388,15 @@ bridge_state_change(struct ifnet *ifp, int state)
 static int
 bridge_pfil(struct mbuf **mp, struct ifnet *bifp, struct ifnet *ifp, int dir)
 {
-	int snap, error, i, hlen;
+	int snap, error, i;
 	struct ether_header *eh1, eh2;
-	struct ip *ip;
 	struct llc llc1;
 	u_int16_t ether_type;
 	pfil_return_t rv;
+#ifdef INET
+	struct ip *ip = NULL;
+	int hlen = 0;
+#endif
 
 	snap = 0;
 	error = -1;	/* Default error if not error == 0 */
@@ -3436,31 +3437,36 @@ bridge_pfil(struct mbuf **mp, struct ifnet *bifp, struct ifnet *ifp, int dir)
 	}
 
 	/*
-	 * If we're trying to filter bridge traffic, don't look at anything
-	 * other than IP and ARP traffic.  If the filter doesn't understand
-	 * IPv6, don't allow IPv6 through the bridge either.  This is lame
-	 * since if we really wanted, say, an AppleTalk filter, we are hosed,
-	 * but of course we don't have an AppleTalk filter to begin with.
-	 * (Note that since pfil doesn't understand ARP it will pass *ALL*
-	 * ARP traffic.)
+	 * If we're trying to filter bridge traffic, only look at traffic for
+	 * protocols available in the kernel (IPv4 and/or IPv6) to avoid
+	 * passing traffic for an unsupported protocol to the filter.  This is
+	 * lame since if we really wanted, say, an AppleTalk filter, we are
+	 * hosed, but of course we don't have an AppleTalk filter to begin
+	 * with.  (Note that since pfil doesn't understand ARP it will pass
+	 * *ALL* ARP traffic.)
 	 */
 	switch (ether_type) {
+#ifdef INET
 		case ETHERTYPE_ARP:
 		case ETHERTYPE_REVARP:
 			if (V_pfil_ipfw_arp == 0)
 				return (0); /* Automatically pass */
-			break;
 
+			/* FALLTHROUGH */
 		case ETHERTYPE_IP:
+#endif
 #ifdef INET6
 		case ETHERTYPE_IPV6:
 #endif /* INET6 */
 			break;
+
 		default:
 			/*
-			 * Check to see if the user wants to pass non-ip
-			 * packets, these will not be checked by pfil(9) and
-			 * passed unconditionally so the default is to drop.
+			 * We get here if the packet isn't from a supported
+			 * protocol.  Check to see if the user wants to pass
+			 * non-IP packets, these will not be checked by pfil(9)
+			 * and passed unconditionally so the default is to
+			 * drop.
 			 */
 			if (V_pfil_onlyip)
 				goto bad;
@@ -3492,9 +3498,11 @@ bridge_pfil(struct mbuf **mp, struct ifnet *bifp, struct ifnet *ifp, int dir)
 	 */
 	if (dir == PFIL_IN) {
 		switch (ether_type) {
+#ifdef INET
 			case ETHERTYPE_IP:
 				error = bridge_ip_checkbasic(mp);
 				break;
+#endif
 #ifdef INET6
 			case ETHERTYPE_IPV6:
 				error = bridge_ip6_checkbasic(mp);
@@ -3514,6 +3522,7 @@ bridge_pfil(struct mbuf **mp, struct ifnet *bifp, struct ifnet *ifp, int dir)
 	 */
 	rv = PFIL_PASS;
 	switch (ether_type) {
+#ifdef INET
 	case ETHERTYPE_IP:
 		/*
 		 * Run pfil on the member interface and the bridge, both can
@@ -3571,6 +3580,7 @@ bridge_pfil(struct mbuf **mp, struct ifnet *bifp, struct ifnet *ifp, int dir)
 			ip->ip_sum = in_cksum(*mp, hlen);
 
 		break;
+#endif /* INET */
 #ifdef INET6
 	case ETHERTYPE_IPV6:
 		if (V_pfil_bridge && dir == PFIL_OUT && bifp != NULL && (rv =
@@ -3628,6 +3638,7 @@ bad:
 	return (error);
 }
 
+#ifdef INET
 /*
  * Perform basic checks on header size since
  * pfil assumes ip_input has already processed
@@ -3728,6 +3739,7 @@ bad:
 	*mp = m;
 	return (-1);
 }
+#endif /* INET */
 
 #ifdef INET6
 /*
@@ -3783,6 +3795,7 @@ bad:
 }
 #endif /* INET6 */
 
+#ifdef INET
 /*
  * bridge_fragment:
  *
@@ -3859,6 +3872,7 @@ dropit:
 	}
 	return (error);
 }
+#endif /* INET */
 
 static void
 bridge_linkstate(struct ifnet *ifp)

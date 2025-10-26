@@ -239,7 +239,7 @@ ae_attach(device_t dev)
 	if_t ifp;
 	uint8_t chiprev;
 	uint32_t pcirev;
-	int nmsi, pmc;
+	int nmsi;
 	int error;
 
 	sc = device_get_softc(dev); /* Automatically allocated and zeroed
@@ -327,12 +327,6 @@ ae_attach(device_t dev)
 		goto fail;
 
 	ifp = sc->ifp = if_alloc(IFT_ETHER);
-	if (ifp == NULL) {
-		device_printf(dev, "could not allocate ifnet structure.\n");
-		error = ENXIO;
-		goto fail;
-	}
-
 	if_setsoftc(ifp, sc);
 	if_initname(ifp, device_get_name(dev), device_get_unit(dev));
 	if_setflags(ifp, IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST);
@@ -343,7 +337,7 @@ ae_attach(device_t dev)
 	if_sethwassist(ifp, 0);
 	if_setsendqlen(ifp, ifqmaxlen);
 	if_setsendqready(ifp);
-	if (pci_find_cap(dev, PCIY_PMG, &pmc) == 0) {
+	if (pci_has_pm(dev)) {
 		if_setcapabilitiesbit(ifp, IFCAP_WOL_MAGIC, 0);
 		sc->flags |= AE_FLAG_PMG;
 	}
@@ -369,12 +363,6 @@ ae_attach(device_t dev)
 	 */
 	sc->tq = taskqueue_create_fast("ae_taskq", M_WAITOK,
             taskqueue_thread_enqueue, &sc->tq);
-	if (sc->tq == NULL) {
-		device_printf(dev, "could not create taskqueue.\n");
-		ether_ifdetach(ifp);
-		error = ENXIO;
-		goto fail;
-	}
 	taskqueue_start_threads(&sc->tq, 1, PI_NET, "%s taskq",
 	    device_get_nameunit(sc->dev));
 
@@ -1319,9 +1307,7 @@ ae_pm_init(ae_softc_t *sc)
 {
 	if_t ifp;
 	uint32_t val;
-	uint16_t pmstat;
 	struct mii_data *mii;
-	int pmc;
 
 	AE_LOCK_ASSERT(sc);
 
@@ -1380,13 +1366,8 @@ ae_pm_init(ae_softc_t *sc)
 	/*
 	 * Configure PME.
 	 */
-	if (pci_find_cap(sc->dev, PCIY_PMG, &pmc) == 0) {
-		pmstat = pci_read_config(sc->dev, pmc + PCIR_POWER_STATUS, 2);
-		pmstat &= ~(PCIM_PSTAT_PME | PCIM_PSTAT_PMEENABLE);
-		if ((if_getcapenable(ifp) & IFCAP_WOL) != 0)
-			pmstat |= PCIM_PSTAT_PME | PCIM_PSTAT_PMEENABLE;
-		pci_write_config(sc->dev, pmc + PCIR_POWER_STATUS, pmstat, 2);
-	}
+	if ((if_getcapenable(ifp) & IFCAP_WOL) != 0)
+		pci_enable_pme(sc->dev);
 }
 
 static int

@@ -330,13 +330,35 @@ hdac_pin_patch(struct hdaa_widget *w)
 		}
 	} else if (id == HDA_CODEC_IDT92HD95B &&
 	    (subid == FRAMEWORK_LAPTOP_0001_SUBVENDOR ||
-	    subid == FRAMEWORK_LAPTOP_0002_SUBVENDOR)) {
+	    subid == FRAMEWORK_LAPTOP_0002_SUBVENDOR ||
+	    subid == FRAMEWORK_LAPTOP_0003_SUBVENDOR)) {
 		switch (nid) {
 		case 10:
 			patch_str = "as=1 seq=15 color=Black loc=Left";
 			break;
 		case 11:
 			patch_str = "as=3 seq=15 color=Black loc=Left";
+			break;
+		}
+	} else if (id == HDA_CODEC_ALC295 &&
+	    subid == FRAMEWORK_LAPTOP_0005_SUBVENDOR) {
+		switch (nid) {
+		case 20:
+			/*
+			 * This pin is a duplicate of pin 23 (both as=1 seq=0),
+			 * which ends up in the driver disabling the
+			 * association altogether. Since sound quality from pin
+			 * 23 seems to be better, configure this one as a back
+			 * speaker.
+			 */
+			patch_str = "as=1 seq=2";
+			break;
+		}
+	} else if (id == HDA_CODEC_ALC295 &&
+	    subid == FRAMEWORK_LAPTOP_0006_SUBVENDOR) {
+		switch (nid) {
+		case 33:
+			patch_str = "as=1 seq=15 color=Black loc=Left";
 			break;
 		}
 	} else if (id == HDA_CODEC_ALC230 &&
@@ -357,6 +379,17 @@ hdac_pin_patch(struct hdaa_widget *w)
 			break;
 		case 24:
 			patch_str = "as=4 seq=15";
+			break;
+		}
+	} else if (id == HDA_CODEC_ALC294 &&
+	    subid == ASUS_UX331_SUBVENDOR) {
+		switch (nid) {
+		case 25:
+			/* XXX You are not expected to understand this. */
+			config = 0x01a1103c;
+			break;
+		case 33:
+			patch_str = "as=1 seq=15";
 			break;
 		}
 	} else {

@@ -48,3 +48,10 @@ FBSD_1.7 {
 	 procstat_getadvlock;
 	 procstat_freeadvlock;
 };
+
+FBSD_1.8 {
+	 procstat_get_kqueue_info;
+	 procstat_getrlimitusage;
+	 procstat_freekqinfo;
+	 procstat_freerlimitusage;
+};

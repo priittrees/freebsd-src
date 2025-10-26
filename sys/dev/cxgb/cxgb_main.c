@@ -36,7 +36,6 @@ POSSIBILITY OF SUCH DAMAGE.
 #include <sys/kernel.h>
 #include <sys/bus.h>
 #include <sys/module.h>
-#include <sys/pciio.h>
 #include <sys/conf.h>
 #include <machine/bus.h>
 #include <machine/resource.h>
@@ -76,7 +75,6 @@ POSSIBILITY OF SUCH DAMAGE.
 
 #include <dev/pci/pcireg.h>
 #include <dev/pci/pcivar.h>
-#include <dev/pci/pci_private.h>
 
 #include <cxgb_include.h>
 
@@ -360,7 +358,7 @@ static int
 cxgb_controller_probe(device_t dev)
 {
 	const struct adapter_info *ai;
-	char *ports, buf[80];
+	const char *ports;
 	int nports;
 
 	ai = cxgb_get_adapter_info(dev);
@@ -373,8 +371,7 @@ cxgb_controller_probe(device_t dev)
 	else
 		ports = "ports";
 
-	snprintf(buf, sizeof(buf), "%s, %d %s", ai->desc, nports, ports);
-	device_set_desc_copy(dev, buf);
+	device_set_descf(dev, "%s, %d %s", ai->desc, nports, ports);
 	return (BUS_PROBE_DEFAULT);
 }
 
@@ -447,7 +444,6 @@ cxgb_controller_attach(device_t dev)
 	uint32_t vers;
 	int port_qsets = 1;
 	int msi_needed, reg;
-	char buf[80];
 
 	sc = device_get_softc(dev);
 	sc->dev = dev;
@@ -659,10 +655,9 @@ cxgb_controller_attach(device_t dev)
 	    G_FW_VERSION_MAJOR(vers), G_FW_VERSION_MINOR(vers),
 	    G_FW_VERSION_MICRO(vers));
 
-	snprintf(buf, sizeof(buf), "%s %sNIC\t E/C: %s S/N: %s",
-		 ai->desc, is_offload(sc) ? "R" : "",
-		 sc->params.vpd.ec, sc->params.vpd.sn);
-	device_set_desc_copy(dev, buf);
+	device_set_descf(dev, "%s %sNIC\t E/C: %s S/N: %s",
+	    ai->desc, is_offload(sc) ? "R" : "",
+	    sc->params.vpd.ec, sc->params.vpd.sn);
 
 	snprintf(&sc->port_types[0], sizeof(sc->port_types), "%x%x%x%x",
 		 sc->params.vpd.port_type[0], sc->params.vpd.port_type[1],
@@ -966,13 +961,11 @@ static int
 cxgb_port_probe(device_t dev)
 {
 	struct port_info *p;
-	char buf[80];
 	const char *desc;
 	
 	p = device_get_softc(dev);
 	desc = p->phy.desc;
-	snprintf(buf, sizeof(buf), "Port %d %s", p->port_id, desc);
-	device_set_desc_copy(dev, buf);
+	device_set_descf(dev, "Port %d %s", p->port_id, desc);
 	return (0);
 }
 
@@ -1016,11 +1009,6 @@ cxgb_port_attach(device_t dev)
 
 	/* Allocate an ifnet object and set it up */
 	ifp = p->ifp = if_alloc(IFT_ETHER);
-	if (ifp == NULL) {
-		device_printf(dev, "Cannot allocate ifnet\n");
-		return (ENOMEM);
-	}
-	
 	if_initname(ifp, device_get_name(dev), device_get_unit(dev));
 	if_setinitfn(ifp, cxgb_init);
 	if_setsoftc(ifp, p);
@@ -1051,6 +1039,11 @@ cxgb_port_attach(device_t dev)
 		if_sethwassistbits(ifp, 0, CSUM_TSO);
 	}
 
+	/* Create a list of media supported by this port */
+	ifmedia_init(&p->media, IFM_IMASK, cxgb_media_change,
+	    cxgb_media_status);
+	cxgb_build_medialist(p);
+
 	ether_ifattach(ifp, p->hw_addr);
 
 	/* Attach driver debugnet methods. */
@@ -1065,11 +1058,6 @@ cxgb_port_attach(device_t dev)
 		return (err);
 	}
 
-	/* Create a list of media supported by this port */
-	ifmedia_init(&p->media, IFM_IMASK, cxgb_media_change,
-	    cxgb_media_status);
-	cxgb_build_medialist(p);
-      
 	t3_sge_init_port(p);
 
 	return (err);
@@ -1148,66 +1136,23 @@ t3_fatal_err(struct adapter *sc)
 int
 t3_os_find_pci_capability(adapter_t *sc, int cap)
 {
-	device_t dev;
-	struct pci_devinfo *dinfo;
-	pcicfgregs *cfg;
-	uint32_t status;
-	uint8_t ptr;
+	int rc, reg = 0;
 
-	dev = sc->dev;
-	dinfo = device_get_ivars(dev);
-	cfg = &dinfo->cfg;
-
-	status = pci_read_config(dev, PCIR_STATUS, 2);
-	if (!(status & PCIM_STATUS_CAPPRESENT))
-		return (0);
-
-	switch (cfg->hdrtype & PCIM_HDRTYPE) {
-	case 0:
-	case 1:
-		ptr = PCIR_CAP_PTR;
-		break;
-	case 2:
-		ptr = PCIR_CAP_PTR_2;
-		break;
-	default:
-		return (0);
-		break;
-	}
-	ptr = pci_read_config(dev, ptr, 1);
-
-	while (ptr != 0) {
-		if (pci_read_config(dev, ptr + PCICAP_ID, 1) == cap)
-			return (ptr);
-		ptr = pci_read_config(dev, ptr + PCICAP_NEXTPTR, 1);
-	}
-
-	return (0);
+	rc = pci_find_cap(sc->dev, cap, &reg);
+	return (rc == 0 ? reg : 0);
 }
 
 int
 t3_os_pci_save_state(struct adapter *sc)
 {
-	device_t dev;
-	struct pci_devinfo *dinfo;
-
-	dev = sc->dev;
-	dinfo = device_get_ivars(dev);
-
-	pci_cfg_save(dev, dinfo, 0);
+	pci_save_state(sc->dev);
 	return (0);
 }
 
 int
 t3_os_pci_restore_state(struct adapter *sc)
 {
-	device_t dev;
-	struct pci_devinfo *dinfo;
-
-	dev = sc->dev;
-	dinfo = device_get_ivars(dev);
-
-	pci_cfg_restore(dev, dinfo);
+	pci_restore_state(sc->dev);
 	return (0);
 }
 
@@ -2482,9 +2427,7 @@ set_eeprom(struct port_info *pi, const uint8_t *data, int len, int offset)
 	aligned_len = (len + (offset & 3) + 3) & ~3;
 
 	if (aligned_offset != offset || aligned_len != len) {
-		buf = malloc(aligned_len, M_DEVBUF, M_WAITOK|M_ZERO);		   
-		if (!buf)
-			return (ENOMEM);
+		buf = malloc(aligned_len, M_DEVBUF, M_WAITOK | M_ZERO);
 		err = t3_seeprom_read(adapter, aligned_offset, (u32 *)buf);
 		if (!err && aligned_len > 4)
 			err = t3_seeprom_read(adapter,

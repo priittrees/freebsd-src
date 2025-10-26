@@ -105,7 +105,8 @@
 #define	PRIV_CRED_SETRESGID	58	/* setresgid. */
 #define	PRIV_SEEOTHERGIDS	59	/* Exempt bsd.seeothergids. */
 #define	PRIV_SEEOTHERUIDS	60	/* Exempt bsd.seeotheruids. */
-#define	PRIV_SEEJAILPROC        61      /* Exempt from bsd.see_jail_proc. */
+#define	PRIV_SEEJAILPROC	61	/* Exempt from bsd.see_jail_proc. */
+#define	PRIV_CRED_SETCRED	62	/* setcred. */
 
 /*
  * Debugging privileges.
@@ -210,6 +211,7 @@
 #define	PRIV_SYSCTL_DEBUG	240	/* Can invoke sysctl.debug. */
 #define	PRIV_SYSCTL_WRITE	241	/* Can write sysctls. */
 #define	PRIV_SYSCTL_WRITEJAIL	242	/* Can write sysctls, jail permitted. */
+#define	PRIV_SYSCTL_MEMLOCK	243	/* Large requests are not serialized. */
 
 /*
  * TTY privileges.
@@ -426,11 +428,13 @@
  */
 #define	PRIV_VM86_INTCALL	550	/* Allow invoking vm86 int handlers. */
 
+#define	PRIV_PIPEBUF		560	/* Allow to allocate reserved pipebuf
+					   space */
+
 /*
  * Set of reserved privilege values, which will be allocated to code as
  * needed, in order to avoid renumbering later privileges due to insertion.
  */
-#define	_PRIV_RESERVED0		560
 #define	_PRIV_RESERVED1		561
 #define	_PRIV_RESERVED2		562
 #define	_PRIV_RESERVED3		563

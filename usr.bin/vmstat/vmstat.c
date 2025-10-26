@@ -79,7 +79,7 @@ static char sccsid[] = "@(#)vmstat.c	8.1 (Berkeley) 6/6/93";
 #include <libutil.h>
 #include <libxo/xo.h>
 
-#define VMSTAT_XO_VERSION "1"
+#define VMSTAT_XO_VERSION "2"
 
 static char da[] = "da";
 
@@ -295,6 +295,7 @@ main(int argc, char *argv[])
 	argv += optind;
 
 	xo_set_version(VMSTAT_XO_VERSION);
+	xo_open_container("vmstat");
 	if (!hflag)
 		xo_set_options(NULL, "no-humanize");
 	if (todo == 0)
@@ -396,6 +397,7 @@ nlist_ok:
 		dointr(interval, reps);
 	if (todo & VMSTAT)
 		dovmstat(interval, reps);
+	xo_close_container("vmstat");
 	xo_finish();
 	exit(0);
 }
@@ -1468,6 +1470,7 @@ display_object(struct kinfo_vmobject *kvo)
 	xo_emit("{:resident/%5ju} ", (uintmax_t)kvo->kvo_resident);
 	xo_emit("{:active/%5ju} ", (uintmax_t)kvo->kvo_active);
 	xo_emit("{:inactive/%5ju} ", (uintmax_t)kvo->kvo_inactive);
+	xo_emit("{:laundry/%5ju} ", (uintmax_t)kvo->kvo_laundry);
 	xo_emit("{:refcount/%3d} ", kvo->kvo_ref_count);
 	xo_emit("{:shadowcount/%3d} ", kvo->kvo_shadow_count);
 
@@ -1550,6 +1553,11 @@ display_object(struct kinfo_vmobject *kvo)
 		break;
 	}
 	xo_emit("{:type/%-2s} ", str);
+	if ((kvo->kvo_flags & KVMO_FLAG_SYSVSHM) != 0)
+		xo_emit("{:sysvshm/sysvshm(%ju:%u)} ",
+		    (uintmax_t)kvo->kvo_vn_fileid, kvo->kvo_vn_fsid_freebsd11);
+	if ((kvo->kvo_flags & KVMO_FLAG_POSIXSHM) != 0)
+		xo_emit("{:posixshm/posixshm@/posixshm}");
 	xo_emit("{:path/%-s}\n", kvo->kvo_path);
 	xo_close_instance("object");
 }
@@ -1565,8 +1573,8 @@ doobjstat(void)
 		xo_warn("Failed to fetch VM object list");
 		return;
 	}
-	xo_emit("{T:RES/%5s} {T:ACT/%5s} {T:INACT/%5s} {T:REF/%3s} {T:SHD/%3s} "
-	    "{T:CM/%3s} {T:TP/%2s} {T:PATH/%s}\n");
+	xo_emit("{T:RES/%5s} {T:ACT/%5s} {T:INACT/%5s} {T:LAUND/%5s} "
+	    "{T:REF/%3s} {T:SHD/%3s} {T:CM/%2s} {T:TP/%3s} {T:PATH/%s}\n");
 	xo_open_list("object");
 	for (i = 0; i < cnt; i++)
 		display_object(&kvo[i]);

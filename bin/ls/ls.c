@@ -655,8 +655,10 @@ traverse(int argc, char *argv[], int options)
 	chp = fts_children(ftsp, 0);
 	if (chp != NULL)
 		display(NULL, chp, options);
-	if (f_listdir)
+	if (f_listdir) {
+		fts_close(ftsp);
 		return;
+	}
 
 	/*
 	 * If not recursing down this tree and don't need stat info, just get
@@ -705,6 +707,7 @@ traverse(int argc, char *argv[], int options)
 		}
 	if (errno)
 		err(1, "fts_read");
+	fts_close(ftsp);
 }
 
 /*
@@ -981,7 +984,8 @@ label_out:
 	d.maxlen = maxlen;
 	if (needstats) {
 		d.btotal = btotal;
-		d.s_block = snprintf(NULL, 0, "%lu", howmany(maxblock, blocksize));
+		d.s_block = snprintf(NULL, 0, f_thousands ? "%'ld" : "%ld",
+		    howmany(maxblock, blocksize));
 		d.s_flags = maxflags;
 		d.s_label = maxlabelstr;
 		d.s_group = maxgroup;

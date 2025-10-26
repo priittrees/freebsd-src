@@ -31,6 +31,7 @@
 #include <sys/sysctl.h>
 
 #include <errno.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -110,8 +111,8 @@ getentropy(void *buf, size_t buflen)
 	ssize_t rd;
 	bool have_getrandom;
 
-	if (buflen > 256) {
-		errno = EIO;
+	if (buflen > GETENTROPY_MAX) {
+		errno = EINVAL;
 		return (-1);
 	}
 
@@ -124,11 +125,11 @@ getentropy(void *buf, size_t buflen)
 				switch (errno) {
 				case ECAPMODE:
 					/*
-					 * Kernel >= r331280 and < r337999
-					 * will return ECAPMODE when the
-					 * caller is already in capability
-					 * mode, fallback to traditional
-					 * method in this case.
+					 * Kernel >= r331280 (4948f7bf1153)
+					 * and < r337999 (ed1fa01ac45a) will
+					 * return ECAPMODE when the caller is
+					 * already in capability mode; fallback
+					 * to traditional method in this case.
 					 */
 					have_getrandom = false;
 					continue;

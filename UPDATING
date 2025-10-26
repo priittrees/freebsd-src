@@ -12,21 +12,115 @@ Items affecting the ports and packages system can be found in
 /usr/ports/UPDATING.  Please read that file before updating system packages
 and/or ports.
 
-20240701:
-	14.1-RELEASE-p2 SA-24:04.openssh
+20251022:
+	14.3-RELEASE-p5 SA-25:09.netinet
 
-	Fix pre-authentication remote code execution in sshd [SA-24:04.openssh]
+	SO_REUSEPORT_LB breaks connect(2) for UDP sockets. [SA-25:09.netinet]
 
-20240619:
-	14.1-RELEASE-p1 EN-24:10.zfs
-			EN-24:13.libc++
+20250930:
+	14.3-RELEASE-p4	EN-25:18.freebsd-update
+			SA-25:08.openssl
 
-	Fix kernel memory leak in ZFS [EN-24:10.zfs]
+	Fix freebsd-update(8) installing libraries in incorrect order. [EN-25:18.freebsd-update]
 
-	Fix incorrect size passed to heap allocated std::string delete [EN-24:13.libc++]
+	Fix multiple vulnerabilities in OpenSSL. [SA-25:08.openssl]
 
-20240604:
-	14.1-RELEASE.
+20250916:
+	14.3-RELEASE-p3	EN-25:15.arm64
+			EN-25:16.vfs
+			EN-25:17.bnxt
+
+	Fix arm64 syscall(2) allows unprivileged user to panic kernel. [EN-25:15.arm64]
+
+	Fix copy_file_range(2) failing to set output parameters. [EN-25:16.vfs]
+
+	Fix bnxt(4) failing to set media type in some cases. [EN-25:17.bnxt]
+
+20250808:
+	14.3-RELEASE-p2	EN-25:12.efi
+			EN-25:13.wlan_tkip
+			EN-25:14.route
+			SA-25:07.libarchive
+
+	Fix bsdinstall(8) not copying the correct loader on systems with IA32 UEFI
+	firmware. [EN-25:12.efi]
+
+	Fix net80211 TKIP crypto support failing for some drivers. [EN-25:13.wlan_tkip]
+
+	Fix route(8) monitor buffering too much when redirected to a file. [EN-25:14.route]
+
+	Update libarchive to 3.8.1 to fix integer overflow leading to double
+	free. [SA-25:07.libarchive]
+
+20250702:
+	14.3-RELEASE-p1	EN-25:10.zfs
+
+	Fix corruption in ZFS replication streams from encrypted datasets [EN-25:10.zfs]
+
+20250610:
+	14.3-RELEASE.
+
+20250419:
+	LinuxKPI alloc routines were changed to return physically contiguous
+	memory where expected. These changes may require out-of-tree drivers
+	to be recompiled.
+	Bump __FreeBSD_version to 1402505 to be able to detect this change.
+
+20250419:
+	Intel iwlwifi firmware has been removed from the src repository.
+	Before updating their system, users of iwlwifi(4) or iwx(4) must
+	install the appropriate firmware for their chipset using fwget(8) or
+	building it from ports.
+
+20250403:
+	Commit 8aedc83c1cc2 ("New setcred() system call and associated MAC
+	hooks") introduces new MAC hooks for the new setcred() system call,
+	modifying the layout and size of 'struct mac_policy_ops'.  As a result,
+	all MAC modules need to be recompiled.
+
+20250228:
+	Commit 9fed5151903f modified the internal API between the
+	nfscommon and nfscl modules.  As such, both of these modules
+	need to be rebuilt from sources.
+	__FreeBSD_version was bumped to 1402504 for this patch.
+
+20250117:
+	The layout of NFS file handles for the tarfs, cd9660, and ext2fs
+	file systems has changed.  An NFS server that exports any of these file
+	systems will need its clients to unmount and remount the exports.
+
+20241222:
+	The ng_ubt(4) driver now requires firmwares to be loaded on Realtek
+	adaptors with rtlbtfw(8) utility. It no longer attaches to devices
+	standing in bootloader mode. Firmware files are available in the
+	comms/rtlbt-firmware port.
+
+20240419:
+	Clang, llvm, lld, lldb, compiler-rt, libc++, libunwind and openmp have
+	been upgraded to 18.1.6. It is important that you run `make delete-old`
+	as described in the COMMON ITEMS section, otherwise several libc++
+	headers that are obsolete and need to be removed can cause compilation
+	errors in C++ programs.
+
+20240415:
+	MFC e0f3dc82727f: If you have an arm64 system that uses ACPI, you will
+	need to update your loader.efi in the ESP when you update past this
+	point.  Detection of ACPI was moved earlier in the binary so the scripts
+	could use it, but old binaries don't have this, so we default to 'no
+	ACPI' in this case.
+
+20240218:
+	MFC of 713db49d06de changed 'struct ieee80211vap' internals in net80211.
+	Given we do not have enough spares and the struct is allocated by
+	drivers, all wireless drivers have to be recompiled.
+	__FreeBSD_version is updated to 1400509 to track this change.
+
+20240207:
+	sendmail 8.18.1 has been imported and merged.  This version enforces
+	stricter RFC compliance by default, especially with respect to line
+	endings.  This may cause issues with receiving messages from
+	non-compliant MTAs; please see the first 8.18.1 release note in
+	contrib/sendmail/RELEASE_NOTES for mitigations.
 
 20240202:
 	Loader now also read configuration files listed in local_loader_conf_files.
@@ -49,30 +143,6 @@ and/or ports.
 	4. And finally, rread local_loader_conf_files files:
 	    /boot/loader.conf.local
 
-20240415:
-	MFC e0f3dc82727f: If you have an arm64 system that uses ACPI, you will
-	need to update your loader.efi in the ESP when you update past this
-	point.  Detection of ACPI was moved earlier in the binary so the scripts
-	could use it, but old binaries don't have this, so we default to 'no
-	ACPI' in this case.
-
-20240218:
-	MFC of 713db49d06de changed 'struct ieee80211vap' internals in net80211.
-	Given we do not have enough spares and the struct is allocated by
-	drivers, all wireless drivers have to be recompiled.
-	__FreeBSD_version is updated to 1400509 to track this change.
-
-20240207:
-	sendmail 8.18.1 has been imported and merged.  This version enforces
-	stricter RFC compliance by default, especially with respect to line
-	endings.  This may cause issues with receiving messages from
-	non-compliant MTAs; please see the first 8.18.1 release note in
-	contrib/sendmail/RELEASE_NOTES for mitigations.
-
-20231113:
-	The WITHOUT_LLD_IS_LD option has been removed.  When LLD is enabled
-	it is always installed as /usr/bin/ld.
-
 20240119:
 	Commit d34f4baaf138 changed the internal interface between
 	the nfscommon and nfscl modules.  As such, both need to be
@@ -92,6 +162,10 @@ and/or ports.
 	As such, both of these modules need to be rebuilt from
 	sources.
 	As such, __FreeBSD_version has been bumped to 1400502.
+
+20231113:
+	The WITHOUT_LLD_IS_LD option has been removed.  When LLD is enabled
+	it is always installed as /usr/bin/ld.
 
 20230924:
 	Enable splitting out pkgbase manpages into separate packages by
@@ -327,6 +401,10 @@ and/or ports.
 	belongs.  Consequently, users may experience surprising results with
 	such names when roaming to different homenets.
 
+20211118:
+	Mips has been removed from universe builds. It will be removed from the
+	tree shortly.
+
 20211110:
 	Commit b8d60729deef changed the TCP congestion control framework so
 	that any of the included congestion control modules could be
@@ -339,10 +417,6 @@ and/or ports.
 	as the default. If no congestion control option is built into the
 	kernel and you are including networking, the kernel compile will
 	fail. Also if no default is declared the kernel compile will fail.
-
-20211118:
-	Mips has been removed from universe builds. It will be removed from the
-	tree shortly.
 
 20211106:
 	Commit f0c9847a6c47 changed the arguments for VOP_ALLOCATE.
@@ -1944,6 +2018,8 @@ COMMON ITEMS:
 	make -DALWAYS_CHECK_MAKE buildkernel KERNCONF=YOUR_KERNEL_HERE
 	make -DALWAYS_CHECK_MAKE installkernel KERNCONF=YOUR_KERNEL_HERE
 
+	If you are running kernel modules from ports, see FOOTNOTE [1].
+
 	To test a kernel once
 	---------------------
 	If you just want to boot a kernel once (because you are not sure
@@ -1960,8 +2036,7 @@ COMMON ITEMS:
 	<make sure you have good level 0 dumps>
 	make buildworld
 	make buildkernel KERNCONF=YOUR_KERNEL_HERE
-	make installkernel KERNCONF=YOUR_KERNEL_HERE
-							[1]
+	make installkernel KERNCONF=YOUR_KERNEL_HERE	[1]
 	<reboot in single user>				[3]
 	etcupdate -p					[5]
 	make installworld
@@ -1979,7 +2054,7 @@ COMMON ITEMS:
 	<make sure you have good level 0 dumps>
 	<boot into -stable>
 	make buildworld
-	make buildkernel KERNCONF=YOUR_KERNEL_HERE
+	make buildkernel KERNCONF=YOUR_KERNEL_HERE	[1]
 	<maybe newfs current's root partition>
 	<mount current's root partition on directory ${CURRENT_ROOT}>
 	make installworld DESTDIR=${CURRENT_ROOT} -DDB_FROM_SRC
@@ -1998,8 +2073,7 @@ COMMON ITEMS:
 	<make sure you have good level 0 dumps>
 	make buildworld					[9]
 	make buildkernel KERNCONF=YOUR_KERNEL_HERE	[8]
-	make installkernel KERNCONF=YOUR_KERNEL_HERE
-							[1]
+	make installkernel KERNCONF=YOUR_KERNEL_HERE	[1]
 	<reboot in single user>				[3]
 	etcupdate -p					[5]
 	make installworld
@@ -2019,8 +2093,10 @@ COMMON ITEMS:
 	messages there.  If in doubt, please track -stable which has
 	much fewer pitfalls.
 
-	[1] If you have third party modules, such as vmware, you should disable
-	them at this point so they don't crash your system on
+FOOTNOTES:
+
+	[1] If you have third party modules, such as drm-kmod or vmware, you
+	should disable them at this point so they don't crash your system on
 	reboot. Alternatively, you should rebuild all the modules you have in
 	your system and install them as well.  If you are running -current, you
 	should seriously consider placing all sources to all the modules for
@@ -2028,7 +2104,7 @@ COMMON ITEMS:
 	happens automatically. If all your modules come from ports, then adding
 	the port origin directories to PORTS_MODULES instead is also automatic
 	and effective, eg:
-	     PORTS_MODULES+=x11/nvidia-driver
+	     PORTS_MODULES+=graphics/drm-kmod graphics/nvidia-drm-kmod
 
 	[3] From the bootblocks, boot -s, and then do
 		fsck -p

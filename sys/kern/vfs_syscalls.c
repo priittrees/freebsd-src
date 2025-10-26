@@ -1147,7 +1147,7 @@ openatfp(struct thread *td, int dirfd, const char *path,
 	 * except O_EXEC is ignored.
 	 */
 	if ((flags & O_PATH) != 0) {
-		flags &= ~(O_CREAT | O_ACCMODE);
+		flags &= ~O_ACCMODE;
 	} else if ((flags & O_EXEC) != 0) {
 		if (flags & O_ACCMODE)
 			return (EINVAL);
@@ -1996,7 +1996,6 @@ restart:
 		if (error != 0)
 			goto out;
 #endif
-		vfs_notify_upper(vp, VFS_NOTIFY_UPPER_UNLINK);
 		error = VOP_REMOVE(nd.ni_dvp, vp, &nd.ni_cnd);
 #ifdef MAC
 out:
@@ -2153,7 +2152,8 @@ kern_accessat(struct thread *td, int fd, const char *path,
 	struct nameidata nd;
 	int error;
 
-	if ((flag & ~(AT_EACCESS | AT_RESOLVE_BENEATH | AT_EMPTY_PATH)) != 0)
+	if ((flag & ~(AT_EACCESS | AT_RESOLVE_BENEATH | AT_EMPTY_PATH |
+	    AT_SYMLINK_NOFOLLOW)) != 0)
 		return (EINVAL);
 	if (amode != F_OK && (amode & ~(R_OK | W_OK | X_OK)) != 0)
 		return (EINVAL);
@@ -2173,8 +2173,8 @@ kern_accessat(struct thread *td, int fd, const char *path,
 	} else
 		usecred = cred;
 	AUDIT_ARG_VALUE(amode);
-	NDINIT_ATRIGHTS(&nd, LOOKUP, FOLLOW | LOCKSHARED | LOCKLEAF |
-	    AUDITVNODE1 | at2cnpflags(flag, AT_RESOLVE_BENEATH |
+	NDINIT_ATRIGHTS(&nd, LOOKUP, LOCKSHARED | LOCKLEAF |
+	    AUDITVNODE1 | at2cnpflags(flag, AT_RESOLVE_BENEATH | AT_SYMLINK_NOFOLLOW |
 	    AT_EMPTY_PATH), pathseg, path, fd, &cap_fstat_rights);
 	if ((error = namei(&nd)) != 0)
 		goto out;
@@ -3963,7 +3963,6 @@ restart:
 			goto fdout;
 		goto restart;
 	}
-	vfs_notify_upper(vp, VFS_NOTIFY_UPPER_UNLINK);
 	error = VOP_RMDIR(nd.ni_dvp, nd.ni_vp, &nd.ni_cnd);
 	vn_finished_write(mp);
 out:
@@ -4903,16 +4902,18 @@ int
 kern_copy_file_range(struct thread *td, int infd, off_t *inoffp, int outfd,
     off_t *outoffp, size_t len, unsigned int flags)
 {
-	struct file *infp, *outfp;
+	struct file *infp, *infp1, *outfp, *outfp1;
 	struct vnode *invp, *outvp;
 	int error;
 	size_t retlen;
 	void *rl_rcookie, *rl_wcookie;
-	off_t savinoff, savoutoff;
+	off_t inoff, outoff, savinoff, savoutoff;
+	bool foffsets_locked, foffsets_set;
 
 	infp = outfp = NULL;
 	rl_rcookie = rl_wcookie = NULL;
-	savinoff = -1;
+	foffsets_locked = false;
+	foffsets_set = false;
 	error = 0;
 	retlen = 0;
 
@@ -4954,13 +4955,37 @@ kern_copy_file_range(struct thread *td, int infd, off_t *inoffp, int outfd,
 		goto out;
 	}
 
-	/* Set the offset pointers to the correct place. */
-	if (inoffp == NULL)
-		inoffp = &infp->f_offset;
-	if (outoffp == NULL)
-		outoffp = &outfp->f_offset;
-	savinoff = *inoffp;
-	savoutoff = *outoffp;
+	/*
+	 * Figure out which file offsets we're reading from and writing to.
+	 * If the offsets come from the file descriptions, we need to lock them,
+	 * and locking both offsets requires a loop to avoid deadlocks.
+	 */
+	infp1 = outfp1 = NULL;
+	if (inoffp != NULL)
+		inoff = *inoffp;
+	else
+		infp1 = infp;
+	if (outoffp != NULL)
+		outoff = *outoffp;
+	else
+		outfp1 = outfp;
+	if (infp1 != NULL || outfp1 != NULL) {
+		if (infp1 == outfp1) {
+			/*
+			 * Overlapping ranges are not allowed.  A more thorough
+			 * check appears below, but we must not lock the same
+			 * offset twice.
+			 */
+			error = EINVAL;
+			goto out;
+		}
+		foffset_lock_pair(infp1, &inoff, outfp1, &outoff, 0);
+		foffsets_locked = true;
+	} else {
+		foffsets_set = true;
+	}
+	savinoff = inoff;
+	savoutoff = outoff;
 
 	invp = infp->f_vnode;
 	outvp = outfp->f_vnode;
@@ -4976,40 +5001,60 @@ kern_copy_file_range(struct thread *td, int infd, off_t *inoffp, int outfd,
 		goto out;
 
 	/*
+	 * Make sure that the ranges we check and lock below are valid.  Note
+	 * that len is clamped to SSIZE_MAX above.
+	 */
+	if (inoff < 0 || outoff < 0) {
+		error = EINVAL;
+		goto out;
+	}
+
+	/*
 	 * If infp and outfp refer to the same file, the byte ranges cannot
 	 * overlap.
 	 */
-	if (invp == outvp && ((savinoff <= savoutoff && savinoff + len >
-	    savoutoff) || (savinoff > savoutoff && savoutoff + len >
-	    savinoff))) {
+	if (invp == outvp && ((inoff <= outoff && inoff + len >
+	    outoff) || (inoff > outoff && outoff + len > inoff))) {
 		error = EINVAL;
 		goto out;
 	}
 
 	/* Range lock the byte ranges for both invp and outvp. */
 	for (;;) {
-		rl_wcookie = vn_rangelock_wlock(outvp, *outoffp, *outoffp +
-		    len);
-		rl_rcookie = vn_rangelock_tryrlock(invp, *inoffp, *inoffp +
-		    len);
+		rl_wcookie = vn_rangelock_wlock(outvp, outoff, outoff + len);
+		rl_rcookie = vn_rangelock_tryrlock(invp, inoff, inoff + len);
 		if (rl_rcookie != NULL)
 			break;
 		vn_rangelock_unlock(outvp, rl_wcookie);
-		rl_rcookie = vn_rangelock_rlock(invp, *inoffp, *inoffp + len);
+		rl_rcookie = vn_rangelock_rlock(invp, inoff, inoff + len);
 		vn_rangelock_unlock(invp, rl_rcookie);
 	}
 
 	retlen = len;
-	error = vn_copy_file_range(invp, inoffp, outvp, outoffp, &retlen,
+	error = vn_copy_file_range(invp, &inoff, outvp, &outoff, &retlen,
 	    flags, infp->f_cred, outfp->f_cred, td);
 out:
 	if (rl_rcookie != NULL)
 		vn_rangelock_unlock(invp, rl_rcookie);
 	if (rl_wcookie != NULL)
 		vn_rangelock_unlock(outvp, rl_wcookie);
-	if (savinoff != -1 && (error == EINTR || error == ERESTART)) {
-		*inoffp = savinoff;
-		*outoffp = savoutoff;
+	if ((foffsets_locked || foffsets_set) &&
+	    (error == EINTR || error == ERESTART)) {
+		inoff = savinoff;
+		outoff = savoutoff;
+	}
+	if (foffsets_locked) {
+		if (inoffp == NULL)
+			foffset_unlock(infp, inoff, 0);
+		else
+			*inoffp = inoff;
+		if (outoffp == NULL)
+			foffset_unlock(outfp, outoff, 0);
+		else
+			*outoffp = outoff;
+	} else if (foffsets_set) {
+		*inoffp = inoff;
+		*outoffp = outoff;
 	}
 	if (outfp != NULL)
 		fdrop(outfp, td);

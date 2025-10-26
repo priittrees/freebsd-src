@@ -89,9 +89,11 @@ env_setup() {
 	SRC_CONF="/dev/null"
 
 	# The number of make(1) jobs, defaults to the number of CPUs available
-	# for buildworld, and half of number of CPUs available for buildkernel.
+	# for buildworld, and half of number of CPUs available for buildkernel
+	# and 'make release'.
 	WORLD_FLAGS="-j$(sysctl -n hw.ncpu)"
 	KERNEL_FLAGS="-j$(( $(( $(sysctl -n hw.ncpu) + 1 )) / 2))"
+	RELEASE_FLAGS="-j$(( $(( $(sysctl -n hw.ncpu) + 1 )) / 2))"
 
 	MAKE_FLAGS="-s"
 
@@ -117,6 +119,9 @@ env_setup() {
 	# Set to non-empty value to build virtual machine images for various
 	# cloud providers as part of the release.
 	WITH_CLOUDWARE=
+
+	# Set to non-empty to build OCI images as part of the release
+	WITH_OCIIMAGES=
 
 	return 0
 } # env_setup()
@@ -190,10 +195,11 @@ env_check() {
 		${CONF_FILES}"
 	RELEASE_KMAKEFLAGS="${MAKE_FLAGS} ${KERNEL_FLAGS} \
 		KERNCONF=\"${KERNEL}\" ${ARCH_FLAGS} ${CONF_FILES}"
-	RELEASE_RMAKEFLAGS="${ARCH_FLAGS} \
+	RELEASE_RMAKEFLAGS="${ARCH_FLAGS} ${RELEASE_FLAGS} \
 		KERNCONF=\"${KERNEL}\" ${CONF_FILES} ${SRCPORTS} \
 		WITH_DVD=${WITH_DVD} WITH_VMIMAGES=${WITH_VMIMAGES} \
-		WITH_CLOUDWARE=${WITH_CLOUDWARE} XZ_THREADS=${XZ_THREADS}"
+		WITH_CLOUDWARE=${WITH_CLOUDWARE} WITH_OCIIMAGES=${WITH_OCIIMAGES} \
+		XZ_THREADS=${XZ_THREADS}"
 
 	return 0
 } # env_check()
@@ -321,6 +327,9 @@ chroot_build_target() {
 	fi
 	eval chroot ${CHROOTDIR} make -C /usr/src ${RELEASE_WMAKEFLAGS} buildworld
 	eval chroot ${CHROOTDIR} make -C /usr/src ${RELEASE_KMAKEFLAGS} buildkernel
+	if [ ! -z "${WITH_OCIIMAGES}" ]; then
+		eval chroot ${CHROOTDIR} make -C /usr/src ${RELEASE_WMAKEFLAGS} packages
+	fi
 
 	return 0
 } # chroot_build_target
@@ -335,7 +344,7 @@ chroot_build_release() {
 		fi
 		if [ -z "${VMSIZE}" ]; then
 			VMSIZE="$(eval chroot ${CHROOTDIR} \
-				make -C /usr/src/release -V VMSIZE)"
+				make -C /usr/src/release ${ARCH_FLAGS} -V VMSIZE)"
 		fi
 		RELEASE_RMAKEFLAGS="${RELEASE_RMAKEFLAGS} \
 			VMFORMATS=\"${VMFORMATS}\" VMSIZE=${VMSIZE}"

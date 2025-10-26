@@ -46,6 +46,7 @@
 #include <machine/resource.h>
 
 #include <contrib/dev/acpica/include/acpi.h>
+#include <contrib/dev/acpica/include/accommon.h>
 #include <dev/acpica/acpivar.h>
 
 #include "acpi_bus_if.h"
@@ -55,6 +56,9 @@
 #include "dpaa2_mcp.h"
 #include "dpaa2_mc.h"
 #include "dpaa2_mc_if.h"
+
+#define	_COMPONENT	ACPI_BUS
+ACPI_MODULE_NAME("DPAA2_MC")
 
 struct dpaa2_mac_dev_softc {
 	int			uid;
@@ -352,6 +356,7 @@ static device_method_t dpaa2_mc_acpi_methods[] = {
 	DEVMETHOD(device_detach,	dpaa2_mc_detach),
 
 	/* Bus interface */
+	DEVMETHOD(bus_get_rman,		dpaa2_mc_rman),
 	DEVMETHOD(bus_alloc_resource,	dpaa2_mc_alloc_resource),
 	DEVMETHOD(bus_adjust_resource,	dpaa2_mc_adjust_resource),
 	DEVMETHOD(bus_release_resource,	dpaa2_mc_release_resource),

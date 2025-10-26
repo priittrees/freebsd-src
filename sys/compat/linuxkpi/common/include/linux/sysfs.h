@@ -164,6 +164,12 @@ sysfs_create_link(struct kobject *kobj __unused,
 	return (0);
 }
 
+static inline void
+sysfs_remove_link(struct kobject *kobj, const char *name)
+{
+	/* TODO (along with sysfs_create_link) */
+}
+
 static inline int
 sysfs_create_files(struct kobject *kobj, const struct attribute * const *attrs)
 {
@@ -341,6 +347,24 @@ sysfs_emit_at(char *buf, int at, const char *fmt, ...)
 
 	return (i);
 }
+
+static inline int
+_sysfs_match_string(const char * const *a, size_t l, const char *s)
+{
+	const char *p;
+	int i;
+
+	for (i = 0; i < l; i++) {
+		p = a[i];
+		if (p == NULL)
+			break;
+		if (sysfs_streq(p, s))
+			return (i);
+	}
+
+	return (-ENOENT);
+}
+#define	sysfs_match_string(a, s)	_sysfs_match_string(a, ARRAY_SIZE(a), s)
 
 #define sysfs_attr_init(attr) do {} while(0)
 

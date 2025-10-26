@@ -6,7 +6,8 @@ BINDIR=		${TESTSDIR}
 
 TESTS_SUBDIRS+=	libalias
 
-ATF_TESTS_C=	ip_reass_test \
+ATF_TESTS_C=	fibs_multibind_test \
+		ip_reass_test \
 		ip6_v4mapped_test \
 		so_reuseport_lb_test \
 		socket_afinet \
@@ -25,8 +26,17 @@ ATF_TESTS_SH=	arp \
 
 ATF_TESTS_PYTEST+=	carp.py
 
-TEST_METADATA.divert+=	required_programs="python"
-TEST_METADATA.forward+=	required_programs="python"
+# Some of the arp tests look for log messages in the dmesg buffer, so run them
+# serially to avoid problems with interleaved output.
+TEST_METADATA.arp+=	is_exclusive="true"
+TEST_METADATA.divert+=	required_programs="python"	\
+			execenv="jail"			\
+			execenv_jail_params="vnet allow.raw_sockets"
+TEST_METADATA.fibs_test+= execenv="jail"		\
+			execenv_jail_params="vnet allow.raw_sockets"
+TEST_METADATA.forward+=	required_programs="python"	\
+			execenv="jail"			\
+			execenv_jail_params="vnet allow.raw_sockets"
 TEST_METADATA.output+=	required_programs="python"
 TEST_METADATA.redirect+= required_programs="python"
 TEST_METADATA.tcp6_v4mapped_bind_test+=	is_exclusive="true"

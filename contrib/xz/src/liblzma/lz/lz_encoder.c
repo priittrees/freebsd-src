@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: 0BSD
+
 ///////////////////////////////////////////////////////////////////////////////
 //
 /// \file       lz_encoder.c
@@ -6,9 +8,6 @@
 //  Authors:    Igor Pavlov
 //              Lasse Collin
 //
-//  This file has been put into the public domain.
-//  You can do whatever you want with this file.
-//
 ///////////////////////////////////////////////////////////////////////////////
 
 #include "lz_encoder.h"
@@ -16,7 +15,7 @@
 
 // See lz_encoder_hash.h. This is a bit hackish but avoids making
 // endianness a conditional in makefiles.
-#if defined(WORDS_BIGENDIAN) && !defined(HAVE_SMALL)
+#ifdef LZMA_LZ_HASH_TABLE_IS_NEEDED
 #	include "lz_encoder_hash_table.h"
 #endif
 
@@ -547,7 +546,7 @@ lzma_lz_encoder_init(lzma_next_coder *next, const lzma_allocator *allocator,
 			lzma_lz_options *lz_options))
 {
 #if defined(HAVE_SMALL) && !defined(HAVE_FUNC_ATTRIBUTE_CONSTRUCTOR)
-	// We need that the CRC32 table has been initialized.
+	// The CRC32 table must be initialized.
 	lzma_crc32_init();
 #endif
 
@@ -567,6 +566,8 @@ lzma_lz_encoder_init(lzma_next_coder *next, const lzma_allocator *allocator,
 		coder->lz.coder = NULL;
 		coder->lz.code = NULL;
 		coder->lz.end = NULL;
+		coder->lz.options_update = NULL;
+		coder->lz.set_out_limit = NULL;
 
 		// mf.size is initialized to silence Valgrind
 		// when used on optimized binaries (GCC may reorder

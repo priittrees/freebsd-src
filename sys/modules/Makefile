@@ -41,6 +41,7 @@ SUBDIR=	\
 	${_arcmsr} \
 	${_allwinner} \
 	${_armv8crypto} \
+	${_armv8_rng} \
 	${_asmc} \
 	ata \
 	ath \
@@ -193,7 +194,6 @@ SUBDIR=	\
 	${_iwi} \
 	${_iwifw} \
 	${_iwlwifi} \
-	${_iwlwififw} \
 	${_iwm} \
 	${_iwmfw} \
 	${_iwn} \
@@ -216,12 +216,14 @@ SUBDIR=	\
 	lindebugfs \
 	linuxkpi \
 	linuxkpi_hdmi \
+	linuxkpi_video \
 	linuxkpi_wlan \
 	${_lio} \
 	lpt \
 	${_mac_biba} \
 	${_mac_bsdextended} \
 	${_mac_ddb} \
+	${_mac_do} \
 	${_mac_ifoff} \
 	${_mac_ipacl} \
 	${_mac_lomac} \
@@ -289,9 +291,9 @@ SUBDIR=	\
 	nmdm \
 	nullfs \
 	${_ntb} \
-	${_nvd} \
+	nvd \
 	${_nvdimm} \
-	${_nvme} \
+	nvme \
 	${_nvram} \
 	oce \
 	${_ocs_fc} \
@@ -340,6 +342,7 @@ SUBDIR=	\
 	rtsx \
 	${_rtw88} \
 	${_rtw88fw} \
+	${_rtw89} \
 	rtwn \
 	rtwn_pci \
 	rtwn_usb \
@@ -436,8 +439,8 @@ SUBDIR+=	dtrace
 SUBDIR+=	opensolaris
 .endif
 
-# Requires bus_space_read_8
-.if ${MACHINE_ARCH} != "i386"
+.if ${MACHINE_ARCH} != "i386" && ${MACHINE_CPUARCH} != "arm" && \
+    ${MACHINE_ARCH} != "powerpc" && ${MACHINE_ARCH} != "powerpcspe"
 _bnxt=		bnxt
 .endif
 
@@ -563,13 +566,11 @@ _mlx5ib=	mlx5ib
 _ena=		ena
 _gve=		gve
 _iwlwifi=	iwlwifi
-.if ${MK_SOURCELESS_UCODE} != "no"
-_iwlwififw=	iwlwififw
-.endif
 _rtw88=		rtw88
 .if ${MK_SOURCELESS_UCODE} != "no"
 _rtw88fw=	rtw88fw
 .endif
+_rtw89=		rtw89
 _vmware=	vmware
 .endif
 
@@ -585,6 +586,7 @@ _mac_bsdextended= mac_bsdextended
 .if ${KERN_OPTS:MDDB} || defined(ALL_MODULES)
 _mac_ddb=	mac_ddb
 .endif
+_mac_do=	mac_do
 _mac_ifoff=	mac_ifoff
 _mac_ipacl=	mac_ipacl
 _mac_lomac=	mac_lomac
@@ -683,6 +685,7 @@ _cxgb=		cxgb
 
 .if ${MACHINE_CPUARCH} == "aarch64"
 _armv8crypto=	armv8crypto
+_armv8_rng=	armv8_rng
 _dpaa2=		dpaa2
 _sff=		sff
 _em=		em
@@ -795,8 +798,6 @@ _iwmfw=		iwmfw
 _iwnfw=		iwnfw
 .endif
 _nfe=		nfe
-_nvd=		nvd
-_nvme=		nvme
 _nvram=		nvram
 .if ${MK_CRYPT} != "no" || defined(ALL_MODULES)
 _padlock=	padlock
@@ -878,8 +879,6 @@ _cfi=		cfi
 _cpufreq=	cpufreq
 _exca=		exca
 _ffec=		ffec
-_nvd=		nvd
-_nvme=		nvme
 .endif
 
 .if ${MACHINE_ARCH:Mpowerpc64*} != ""

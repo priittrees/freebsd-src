@@ -364,6 +364,8 @@
             ..
             stdlib
             ..
+            stdtime
+            ..
             string
             ..
             sys
@@ -477,6 +479,8 @@
         ..
         route
         ..
+        savecore
+        ..
         sysctl
         ..
     ..
@@ -514,6 +518,10 @@
         audit
         ..
         auditpipe
+        ..
+        cam
+            ctl
+            ..
         ..
         capsicum
         ..
@@ -901,6 +909,8 @@
         ..
         posixshm
         ..
+        sound
+        ..
         sys
         ..
         vfs
@@ -1053,6 +1063,8 @@
         ..
         du
         ..
+        env
+        ..
         factor
         ..
         file2c
@@ -1135,6 +1147,8 @@
         ..
         tar
         ..
+        tee
+        ..
         tftp
         ..
         touch
@@ -1171,6 +1185,8 @@
     usr.sbin
         chown
         ..
+        ctladm
+        ..
         daemon
         ..
         etcupdate
@@ -1182,6 +1198,8 @@
         jail
         ..
         makefs
+        ..
+        mixer
         ..
         newsyslog
         ..

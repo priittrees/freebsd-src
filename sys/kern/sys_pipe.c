@@ -104,6 +104,7 @@
 #include <sys/stat.h>
 #include <sys/malloc.h>
 #include <sys/poll.h>
+#include <sys/priv.h>
 #include <sys/selinfo.h>
 #include <sys/signalvar.h>
 #include <sys/syscallsubr.h>
@@ -153,7 +154,7 @@ static fo_chmod_t	pipe_chmod;
 static fo_chown_t	pipe_chown;
 static fo_fill_kinfo_t	pipe_fill_kinfo;
 
-struct fileops pipeops = {
+const struct fileops pipeops = {
 	.fo_read = pipe_read,
 	.fo_write = pipe_write,
 	.fo_truncate = pipe_truncate,
@@ -175,21 +176,26 @@ static void	filt_pipedetach_notsup(struct knote *kn);
 static int	filt_pipenotsup(struct knote *kn, long hint);
 static int	filt_piperead(struct knote *kn, long hint);
 static int	filt_pipewrite(struct knote *kn, long hint);
+static int	filt_pipedump(struct proc *p, struct knote *kn,
+    struct kinfo_knote *kin);
 
-static struct filterops pipe_nfiltops = {
+static const struct filterops pipe_nfiltops = {
 	.f_isfd = 1,
 	.f_detach = filt_pipedetach_notsup,
 	.f_event = filt_pipenotsup
+	/* no userdump */
 };
-static struct filterops pipe_rfiltops = {
+static const struct filterops pipe_rfiltops = {
 	.f_isfd = 1,
 	.f_detach = filt_pipedetach,
-	.f_event = filt_piperead
+	.f_event = filt_piperead,
+	.f_userdump = filt_pipedump,
 };
-static struct filterops pipe_wfiltops = {
+static const struct filterops pipe_wfiltops = {
 	.f_isfd = 1,
 	.f_detach = filt_pipedetach,
-	.f_event = filt_pipewrite
+	.f_event = filt_pipewrite,
+	.f_userdump = filt_pipedump,
 };
 
 /*
@@ -207,6 +213,7 @@ static int pipeallocfail;
 static int piperesizefail;
 static int piperesizeallowed = 1;
 static long pipe_mindirect = PIPE_MINDIRECT;
+static int pipebuf_reserv = 2;
 
 SYSCTL_LONG(_kern_ipc, OID_AUTO, maxpipekva, CTLFLAG_RDTUN | CTLFLAG_NOFETCH,
 	   &maxpipekva, 0, "Pipe KVA limit");
@@ -220,6 +227,9 @@ SYSCTL_INT(_kern_ipc, OID_AUTO, piperesizefail, CTLFLAG_RD,
 	  &piperesizefail, 0, "Pipe resize failures");
 SYSCTL_INT(_kern_ipc, OID_AUTO, piperesizeallowed, CTLFLAG_RW,
 	  &piperesizeallowed, 0, "Pipe resizing allowed");
+SYSCTL_INT(_kern_ipc, OID_AUTO, pipebuf_reserv, CTLFLAG_RW,
+    &pipebuf_reserv, 0,
+    "Superuser-reserved percentage of the pipe buffers space");
 
 static void pipeinit(void *dummy __unused);
 static void pipeclose(struct pipe *cpipe);
@@ -376,6 +386,7 @@ pipe_paircreate(struct thread *td, struct pipepair **p_pp)
 #endif
 	rpipe = &pp->pp_rpipe;
 	wpipe = &pp->pp_wpipe;
+	pp->pp_owner = crhold(td->td_ucred);
 
 	knlist_init_mtx(&rpipe->pipe_sel.si_note, PIPE_MTX(rpipe));
 	knlist_init_mtx(&wpipe->pipe_sel.si_note, PIPE_MTX(wpipe));
@@ -409,6 +420,7 @@ pipe_paircreate(struct thread *td, struct pipepair **p_pp)
 fail:
 	knlist_destroy(&rpipe->pipe_sel.si_note);
 	knlist_destroy(&wpipe->pipe_sel.si_note);
+	crfree(pp->pp_owner);
 #ifdef MAC
 	mac_pipe_destroy(pp);
 #endif
@@ -575,9 +587,34 @@ retry:
 	size = round_page(size);
 	buffer = (caddr_t) vm_map_min(pipe_map);
 
-	error = vm_map_find(pipe_map, NULL, 0, (vm_offset_t *)&buffer, size, 0,
-	    VMFS_ANY_SPACE, VM_PROT_RW, VM_PROT_RW, 0);
+	if (!chgpipecnt(cpipe->pipe_pair->pp_owner->cr_ruidinfo,
+	    size, lim_cur(curthread, RLIMIT_PIPEBUF))) {
+		if (cpipe->pipe_buffer.buffer == NULL &&
+		    size > SMALL_PIPE_SIZE) {
+			size = SMALL_PIPE_SIZE;
+			goto retry;
+		}
+		return (ENOMEM);
+	}
+
+	vm_map_lock(pipe_map);
+	if (priv_check(curthread, PRIV_PIPEBUF) != 0 && maxpipekva / 100 *
+	    (100 - pipebuf_reserv) < amountpipekva + size) {
+		vm_map_unlock(pipe_map);
+		chgpipecnt(cpipe->pipe_pair->pp_owner->cr_ruidinfo, -size, 0);
+		if (cpipe->pipe_buffer.buffer == NULL &&
+		    size > SMALL_PIPE_SIZE) {
+			size = SMALL_PIPE_SIZE;
+			pipefragretry++;
+			goto retry;
+		}
+		return (ENOMEM);
+	}
+	error = vm_map_find_locked(pipe_map, NULL, 0, (vm_offset_t *)&buffer,
+	    size, 0, VMFS_ANY_SPACE, VM_PROT_RW, VM_PROT_RW, 0);
+	vm_map_unlock(pipe_map);
 	if (error != KERN_SUCCESS) {
+		chgpipecnt(cpipe->pipe_pair->pp_owner->cr_ruidinfo, -size, 0);
 		if (cpipe->pipe_buffer.buffer == NULL &&
 		    size > SMALL_PIPE_SIZE) {
 			size = SMALL_PIPE_SIZE;
@@ -942,8 +979,10 @@ pipe_build_write_buffer(struct pipe *wpipe, struct uio *uio)
 
 	uio->uio_iov->iov_len -= size;
 	uio->uio_iov->iov_base = (char *)uio->uio_iov->iov_base + size;
-	if (uio->uio_iov->iov_len == 0)
+	if (uio->uio_iov->iov_len == 0) {
 		uio->uio_iov++;
+		uio->uio_iovcnt--;
+	}
 	uio->uio_resid -= size;
 	uio->uio_offset += size;
 	return (0);
@@ -1644,6 +1683,8 @@ pipe_free_kmem(struct pipe *cpipe)
 
 	if (cpipe->pipe_buffer.buffer != NULL) {
 		atomic_subtract_long(&amountpipekva, cpipe->pipe_buffer.size);
+		chgpipecnt(cpipe->pipe_pair->pp_owner->cr_ruidinfo,
+		    -cpipe->pipe_buffer.size, 0);
 		vm_map_remove(pipe_map,
 		    (vm_offset_t)cpipe->pipe_buffer.buffer,
 		    (vm_offset_t)cpipe->pipe_buffer.buffer + cpipe->pipe_buffer.size);
@@ -1730,6 +1771,7 @@ pipeclose(struct pipe *cpipe)
 	 */
 	if (ppipe->pipe_present == PIPE_FINALIZED) {
 		PIPE_UNLOCK(cpipe);
+		crfree(cpipe->pipe_pair->pp_owner);
 #ifdef MAC
 		mac_pipe_destroy(pp);
 #endif
@@ -1862,5 +1904,16 @@ static int
 filt_pipenotsup(struct knote *kn, long hint)
 {
 
+	return (0);
+}
+
+static int
+filt_pipedump(struct proc *p, struct knote *kn,
+    struct kinfo_knote *kin)
+{
+	struct pipe *pipe = kn->kn_hook;
+
+	kin->knt_extdata = KNOTE_EXTDATA_PIPE;
+	kin->knt_pipe.knt_pipe_ino = pipe->pipe_ino;
 	return (0);
 }

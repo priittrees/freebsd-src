@@ -54,6 +54,7 @@ SRCS+=	__getosreldate.c \
 	exec.c \
 	exect.c \
 	fdevname.c \
+	fdopendir.c \
 	feature_present.c \
 	fmtcheck.c \
 	fmtmsg.c \
@@ -112,6 +113,7 @@ SRCS+=	__getosreldate.c \
 	nlist.c \
 	nrand48.c \
 	opendir.c \
+	opendir2.c \
 	pause.c \
 	pmadvise.c \
 	popen.c \
@@ -292,6 +294,7 @@ MAN+=	alarm.3 \
 	rand48.3 \
 	readpassphrase.3 \
 	rfork_thread.3 \
+	rtld_get_var.3 \
 	scandir.3 \
 	sem_destroy.3 \
 	sem_getvalue.3 \
@@ -484,7 +487,8 @@ MLINKS+=posix_spawn.3 posix_spawnp.3 \
 	posix_spawnattr_getsigdefault.3 posix_spawnattr_setsigdefault.3 \
 	posix_spawnattr_getsigmask.3 posix_spawnattr_setsigmask.3 \
 	posix_spawnattr_init.3 posix_spawnattr_destroy.3
-MLINKS+=psignal.3 strsignal.3 \
+MLINKS+=psignal.3 psiginfo.3 \
+	psignal.3 strsignal.3 \
 	psignal.3 sys_siglist.3 \
 	psignal.3 sys_signame.3
 MLINKS+=pwcache.3 group_from_gid.3 \
@@ -500,6 +504,8 @@ MLINKS+=rand48.3 _rand48.3 \
 	rand48.3 seed48.3 \
 	rand48.3 srand48.3
 MLINKS+=recv.2 recvmmsg.2
+MLINKS+=rtld_get_var.3 \
+	rtld_set_var.3
 MLINKS+=scandir.3 alphasort.3 \
 	scandir.3 scandirat.3 \
 	scandir.3 scandir_b.3 \

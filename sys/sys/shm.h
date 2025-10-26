@@ -149,11 +149,19 @@ struct shm_info {
 #ifdef _KERNEL
 struct proc;
 struct vmspace;
+struct vm_object;
 
 extern struct shminfo	shminfo;
 
+#define	SHMSEG_FREE     	0x0200
+#define	SHMSEG_REMOVED  	0x0400
+#define	SHMSEG_ALLOCATED	0x0800
+
 void	shmexit(struct vmspace *);
 void	shmfork(struct proc *, struct proc *);
+void	shmobjinfo(struct vm_object *obj, key_t *key, unsigned short *seq);
+int	kern_get_shmsegs(struct thread *td, struct shmid_kernel **res,
+	    size_t *sz);
 
 #else /* !_KERNEL */
 

@@ -820,12 +820,14 @@ typedef struct {
 #define	NT_PROCSTAT_PSSTRINGS	15	/* Procstat ps_strings data. */
 #define	NT_PROCSTAT_AUXV	16	/* Procstat auxv data. */
 #define	NT_PTLWPINFO		17	/* Thread ptrace miscellaneous info. */
+#define	NT_PROCSTAT_KQUEUES	18	/* Procstat kqueues events. */
 #define	NT_PPC_VMX	0x100	/* PowerPC Altivec/VMX registers */
 #define	NT_PPC_VSX	0x102	/* PowerPC VSX registers */
 #define	NT_X86_SEGBASES	0x200	/* x86 FS/GS base addresses. */
 #define	NT_X86_XSTATE	0x202	/* x86 XSAVE extended state. */
 #define	NT_ARM_VFP	0x400	/* ARM VFP registers */
 #define	NT_ARM_TLS	0x401	/* ARM TLS register */
+#define	NT_ARM_SVE	0x405	/* ARM SVE registers */
 #define	NT_ARM_ADDR_MASK	0x406	/* arm64 address mask (e.g. for TBI) */
 
 /* GNU note types. */
@@ -882,6 +884,9 @@ typedef struct {
 #define	STV_EXPORTED	0x4
 #define	STV_SINGLETON	0x5
 #define	STV_ELIMINATE	0x6
+
+/* Architecture specific data - st_other */
+#define	STO_AARCH64_VARIANT_PCS 0x80
 
 /* Special symbol table indexes. */
 #define	STN_UNDEF	0	/* Undefined symbol index. */

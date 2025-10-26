@@ -133,7 +133,7 @@ main() {
 		echo 'deps: {' >> ${uclfile}
 		for dep in ${pkgdeps}; do
 			cat <<EOF >> ${uclfile}
-	FreeBSD-${dep}: {
+	${PKG_NAME_PREFIX}-${dep}: {
 		origin: "base",
 		version: "${PKG_VERSION}"
 	}
@@ -153,7 +153,7 @@ EOF
 		PKG_WWW "${PKG_WWW}" \
 		PKG_MAINTAINER "${PKG_MAINTAINER}" \
 		UCLFILES "${srctree}/release/packages/" \
-		${uclsource} ${uclfile}
+		${uclfile} ${uclfile}
 
 	return 0
 }

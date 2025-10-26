@@ -375,6 +375,7 @@ nfsrvd_setattr(struct nfsrv_descript *nd, __unused int isdgram,
 	NFSACL_T *aclp = NULL;
 	struct thread *p = curthread;
 
+	NFSZERO_ATTRBIT(&retbits);
 	if (nd->nd_repstat) {
 		nfsrv_wcc(nd, preat_ret, &nva2, postat_ret, &nva);
 		goto out;
@@ -402,7 +403,6 @@ nfsrvd_setattr(struct nfsrv_descript *nd, __unused int isdgram,
 		goto nfsmout;
 
 	/* For NFSv4, only va_uid is used from nva2. */
-	NFSZERO_ATTRBIT(&retbits);
 	NFSSETBIT_ATTRBIT(&retbits, NFSATTRBIT_OWNER);
 	preat_ret = nfsvno_getattr(vp, &nva2, nd, p, 1, &retbits);
 	if (!nd->nd_repstat)
@@ -3244,6 +3244,13 @@ nfsrvd_open(struct nfsrv_descript *nd, __unused int isdgram,
 				NFSM_BUILD(tl, u_int32_t *, 2 * NFSX_UNSIGNED);
 				*tl++ = txdr_unsigned(NFSV4OPEN_RESOURCE);
 				*tl = newnfs_false;
+			} else if ((rflags &
+			    NFSV4OPEN_WDNOTSUPPDOWNGRADE) != 0) {
+				NFSM_BUILD(tl, uint32_t *, NFSX_UNSIGNED);
+				*tl = txdr_unsigned(NFSV4OPEN_NOTSUPPDOWNGRADE);
+			} else if ((rflags & NFSV4OPEN_WDNOTSUPPUPGRADE) != 0) {
+				NFSM_BUILD(tl, uint32_t *, NFSX_UNSIGNED);
+				*tl = txdr_unsigned(NFSV4OPEN_NOTSUPPUPGRADE);
 			} else {
 				NFSM_BUILD(tl, u_int32_t *, NFSX_UNSIGNED);
 				*tl = txdr_unsigned(NFSV4OPEN_NOTWANTED);

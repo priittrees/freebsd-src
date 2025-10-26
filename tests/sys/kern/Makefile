@@ -21,6 +21,7 @@ ATF_TESTS_C+=	kill_zombie
 .if ${MK_OPENSSL} != "no"
 ATF_TESTS_C+=	ktls_test
 .endif
+ATF_TESTS_C+=	ktrace_test
 ATF_TESTS_C+=	module_test
 ATF_TESTS_C+=	ptrace_test
 TEST_METADATA.ptrace_test+=		timeout="15"
@@ -31,6 +32,7 @@ ATF_TESTS_C+=	sigwait
 ATF_TESTS_C+=	socket_accf
 ATF_TESTS_C+=	socket_msg_trunc
 ATF_TESTS_C+=	socket_msg_waitall
+ATF_TESTS_C+=	socket_splice
 TEST_METADATA.sigwait+=	is_exclusive="true"
 .if ${MACHINE_ARCH} != "i386" && ${MACHINE_ARCH:Mpowerpc*} == ""
 ATF_TESTS_C+=	subr_physmem_test
@@ -56,6 +58,7 @@ ATF_TESTS_SH+=	coredump_phnum_test
 ATF_TESTS_SH+=	sonewconn_overflow
 TEST_METADATA.sonewconn_overflow+=	required_programs="python"
 TEST_METADATA.sonewconn_overflow+=	required_user="root"
+TEST_METADATA.sonewconn_overflow+=	is_exclusive="true"
 ATF_TESTS_SH+=	sendfile_test
 
 ${PACKAGE}FILES+=	sonewconn_overflow.py
@@ -76,9 +79,11 @@ LIBADD.kcov+=				pthread
 CFLAGS.ktls_test+=			-DOPENSSL_API_COMPAT=0x10100000L
 LIBADD.ktls_test+=			crypto util
 LIBADD.socket_msg_waitall+=		pthread
+LIBADD.socket_splice+=			pthread
 LIBADD.sendfile_helper+=		pthread
 LIBADD.fdgrowtable_test+=		util pthread kvm procstat
 LIBADD.sigwait+=			rt
+LIBADD.ktrace_test+=			sysdecode
 
 NETBSD_ATF_TESTS_C+=	lockf_test
 NETBSD_ATF_TESTS_C+=	mqueue_test

@@ -218,6 +218,7 @@
 #define	__aligned(x)	__attribute__((__aligned__(x)))
 #define	__section(x)	__attribute__((__section__(x)))
 #endif
+#define	__writeonly	__unused
 #if __GNUC_PREREQ__(4, 3) || __has_attribute(__alloc_size__)
 #define	__alloc_size(x)	__attribute__((__alloc_size__(x)))
 #define	__alloc_size2(n, x)	__attribute__((__alloc_size__(n, x)))
@@ -276,15 +277,6 @@
 #if (defined(__cplusplus) && __cplusplus >= 201103L) || \
     __has_extension(cxx_static_assert)
 #define	_Static_assert(x, y)	static_assert(x, y)
-#elif __GNUC_PREREQ__(4,6) && !defined(__cplusplus)
-/* Nothing, gcc 4.6 and higher has _Static_assert built-in */
-#elif defined(__COUNTER__)
-#define	_Static_assert(x, y)	__Static_assert(x, __COUNTER__)
-#define	__Static_assert(x, y)	___Static_assert(x, y)
-#define	___Static_assert(x, y)	typedef char __assert_ ## y[(x) ? 1 : -1] \
-				__unused
-#else
-#define	_Static_assert(x, y)	struct __hack
 #endif
 #endif
 
@@ -763,10 +755,10 @@
 #define	__ISO_C_VISIBLE		2011
 #define	__EXT1_VISIBLE		0
 #else				/* Default environment: show everything. */
-#define	__POSIX_VISIBLE		200809
-#define	__XSI_VISIBLE		700
+#define	__POSIX_VISIBLE		202405
+#define	__XSI_VISIBLE		800
 #define	__BSD_VISIBLE		1
-#define	__ISO_C_VISIBLE		2011
+#define	__ISO_C_VISIBLE		2023
 #define	__EXT1_VISIBLE		1
 #endif
 #endif
@@ -880,19 +872,33 @@
  * GCC has the nosanitize attribute, but as a function attribute only, and
  * warns on use as a variable attribute.
  */
-#if __has_attribute(no_sanitize) && defined(__clang__)
+#if __has_feature(address_sanitizer) && defined(__clang__)
 #ifdef _KERNEL
-#define __nosanitizeaddress	__attribute__((no_sanitize("kernel-address")))
-#define __nosanitizememory	__attribute__((no_sanitize("kernel-memory")))
+#define	__nosanitizeaddress	__attribute__((no_sanitize("kernel-address")))
 #else
-#define __nosanitizeaddress	__attribute__((no_sanitize("address")))
-#define __nosanitizememory	__attribute__((no_sanitize("memory")))
+#define	__nosanitizeaddress	__attribute__((no_sanitize("address")))
 #endif
-#define __nosanitizethread	__attribute__((no_sanitize("thread")))
 #else
-#define __nosanitizeaddress
-#define __nosanitizememory
-#define __nosanitizethread
+#define	__nosanitizeaddress
+#endif
+#if __has_feature(coverage_sanitizer) && defined(__clang__)
+#define	__nosanitizecoverage	__attribute__((no_sanitize("coverage")))
+#else
+#define	__nosanitizecoverage
+#endif
+#if __has_feature(memory_sanitizer) && defined(__clang__)
+#ifdef _KERNEL
+#define	__nosanitizememory	__attribute__((no_sanitize("kernel-memory")))
+#else
+#define	__nosanitizememory	__attribute__((no_sanitize("memory")))
+#endif
+#else
+#define	__nosanitizememory
+#endif
+#if __has_feature(thread_sanitizer) && defined(__clang__)
+#define	__nosanitizethread	__attribute__((no_sanitize("thread")))
+#else
+#define	__nosanitizethread
 #endif
 
 /*
@@ -913,7 +919,7 @@
 /* Provide fallback versions for other compilers (GCC/Clang < 10): */
 #if !__has_builtin(__builtin_is_aligned)
 #define __builtin_is_aligned(x, align)	\
-	(((__uintptr_t)x & ((align) - 1)) == 0)
+	(((__uintptr_t)(x) & ((align) - 1)) == 0)
 #endif
 #if !__has_builtin(__builtin_align_up)
 #define __builtin_align_up(x, align)	\

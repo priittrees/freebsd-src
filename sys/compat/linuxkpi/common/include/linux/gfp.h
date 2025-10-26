@@ -44,7 +44,6 @@
 #define	__GFP_NOWARN	0
 #define	__GFP_HIGHMEM	0
 #define	__GFP_ZERO	M_ZERO
-#define	__GFP_NORETRY	0
 #define	__GFP_NOMEMALLOC 0
 #define	__GFP_RECLAIM   0
 #define	__GFP_RECLAIMABLE   0
@@ -58,7 +57,8 @@
 #define	__GFP_KSWAPD_RECLAIM	0
 #define	__GFP_WAIT	M_WAITOK
 #define	__GFP_DMA32	(1U << 24) /* LinuxKPI only */
-#define	__GFP_BITS_SHIFT 25
+#define	__GFP_NORETRY	(1U << 25) /* LinuxKPI only */
+#define	__GFP_BITS_SHIFT 26
 #define	__GFP_BITS_MASK	((1 << __GFP_BITS_SHIFT) - 1)
 #define	__GFP_NOFAIL	M_WAITOK
 
@@ -86,19 +86,10 @@ struct page_frag_cache {
 };
 
 /*
- * Resolve a page into a virtual address:
- *
- * NOTE: This function only works for pages allocated by the kernel.
- */
-extern void *linux_page_address(struct page *);
-
-#define	page_address(page) linux_page_address(page)
-
-/*
  * Page management for unmapped pages:
  */
-extern struct page *linux_alloc_pages(gfp_t flags, unsigned int order);
-extern void linux_free_pages(struct page *page, unsigned int order);
+struct page *linux_alloc_pages(gfp_t flags, unsigned int order);
+void linux_free_pages(struct page *page, unsigned int order);
 void *linuxkpi_page_frag_alloc(struct page_frag_cache *, size_t, gfp_t);
 void linuxkpi_page_frag_free(void *);
 void linuxkpi__page_frag_cache_drain(struct page *, size_t);
@@ -147,8 +138,8 @@ dev_alloc_pages(unsigned int order)
 /*
  * Page management for mapped pages:
  */
-extern vm_offset_t linux_alloc_kmem(gfp_t flags, unsigned int order);
-extern void linux_free_kmem(vm_offset_t, unsigned int order);
+vm_offset_t linux_alloc_kmem(gfp_t flags, unsigned int order);
+void linux_free_kmem(vm_offset_t, unsigned int order);
 
 static inline vm_offset_t
 get_zeroed_page(gfp_t flags)

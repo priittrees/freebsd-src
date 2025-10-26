@@ -984,10 +984,11 @@ getmemsize(caddr_t kmdp, u_int64_t first)
 		if (physmap[i + 1] < end)
 			end = trunc_page(physmap[i + 1]);
 		for (pa = round_page(physmap[i]); pa < end; pa += PAGE_SIZE) {
-			int tmp, page_bad, full;
 			int *ptr = (int *)CADDR1;
+			int tmp;
+			bool full, page_bad;
 
-			full = FALSE;
+			full = false;
 			/*
 			 * block out kernel memory as not available.
 			 */
@@ -1002,7 +1003,7 @@ getmemsize(caddr_t kmdp, u_int64_t first)
 			    && pa < dcons_addr + dcons_size)
 				goto do_dump_avail;
 
-			page_bad = FALSE;
+			page_bad = false;
 			if (memtest == 0)
 				goto skip_memtest;
 
@@ -1026,25 +1027,25 @@ getmemsize(caddr_t kmdp, u_int64_t first)
 			 */
 			*(volatile int *)ptr = 0xaaaaaaaa;
 			if (*(volatile int *)ptr != 0xaaaaaaaa)
-				page_bad = TRUE;
+				page_bad = true;
 			/*
 			 * Test for alternating 0's and 1's
 			 */
 			*(volatile int *)ptr = 0x55555555;
 			if (*(volatile int *)ptr != 0x55555555)
-				page_bad = TRUE;
+				page_bad = true;
 			/*
 			 * Test for all 1's
 			 */
 			*(volatile int *)ptr = 0xffffffff;
 			if (*(volatile int *)ptr != 0xffffffff)
-				page_bad = TRUE;
+				page_bad = true;
 			/*
 			 * Test for all 0's
 			 */
 			*(volatile int *)ptr = 0x0;
 			if (*(volatile int *)ptr != 0x0)
-				page_bad = TRUE;
+				page_bad = true;
 			/*
 			 * Restore original value.
 			 */
@@ -1054,7 +1055,7 @@ skip_memtest:
 			/*
 			 * Adjust array of valid/good pages.
 			 */
-			if (page_bad == TRUE)
+			if (page_bad == true)
 				continue;
 			/*
 			 * If this good page is a continuation of the
@@ -1075,7 +1076,7 @@ skip_memtest:
 					printf(
 		"Too many holes in the physical address space, giving up\n");
 					pa_indx--;
-					full = TRUE;
+					full = true;
 					goto do_dump_avail;
 				}
 				phys_avail[pa_indx++] = pa;	/* start */
@@ -1465,15 +1466,6 @@ hammer_time(u_int64_t modulep, u_int64_t physfree)
 	r_idt.rd_base = (long) idt;
 	lidt(&r_idt);
 
-	/*
-	 * Use vt(4) by default for UEFI boot (during the sc(4)/vt(4)
-	 * transition).
-	 * Once bootblocks have updated, we can test directly for
-	 * efi_systbl != NULL here...
-	 */
-	if (efi_boot)
-		vty_set_preferred(VTY_VT);
-
 	TUNABLE_INT_FETCH("hw.ibrs_disable", &hw_ibrs_disable);
 	TUNABLE_INT_FETCH("machdep.mitigations.ibrs.disable", &hw_ibrs_disable);
 
@@ -1496,6 +1488,12 @@ hammer_time(u_int64_t modulep, u_int64_t physfree)
 	zenbleed_sanitize_enable();
 
 	finishidentcpu();	/* Final stage of CPU initialization */
+
+	invlpgb_works = (amd_extended_feature_extensions &
+	    AMDFEID_INVLPGB) != 0;
+	TUNABLE_INT_FETCH("vm.pmap.invlpgb_works", &invlpgb_works);
+	if (invlpgb_works)
+		invlpgb_maxcnt = cpu_procinfo3 & AMDID_INVLPGB_MAXCNT;
 
 	/*
 	 * Initialize the clock before the console so that console
@@ -1692,6 +1690,27 @@ SYSCTL_PROC(_machdep, OID_AUTO, efi_map,
     CTLTYPE_OPAQUE | CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, 0,
     efi_map_sysctl_handler, "S,efi_map_header",
     "Raw EFI Memory Map");
+
+static int
+efi_arch_sysctl_handler(SYSCTL_HANDLER_ARGS)
+{
+	char *arch;
+	caddr_t kmdp;
+
+	kmdp = preload_search_by_type("elf kernel");
+	if (kmdp == NULL)
+		kmdp = preload_search_by_type("elf64 kernel");
+
+	arch = (char *)preload_search_info(kmdp,
+	    MODINFO_METADATA | MODINFOMD_EFI_ARCH);
+	if (arch == NULL)
+		return (0);
+
+	return (SYSCTL_OUT_STR(req, arch));
+}
+SYSCTL_PROC(_machdep, OID_AUTO, efi_arch,
+    CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, 0,
+    efi_arch_sysctl_handler, "A", "EFI Firmware Architecture");
 
 void
 spinlock_enter(void)

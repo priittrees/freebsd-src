@@ -105,15 +105,15 @@ struct {
 	{0x6802, "Chelsio T6225-SO-CR VF"},	/* 2 x 10/25G, nomem */
 	{0x6803, "Chelsio T6425-CR VF"},	/* 4 x 10/25G */
 	{0x6804, "Chelsio T6425-SO-CR VF"},	/* 4 x 10/25G, nomem */
-	{0x6805, "Chelsio T6225-OCP-SO VF"},	/* 2 x 10/25G, nomem */
-	{0x6806, "Chelsio T62100-OCP-SO VF"},	/* 2 x 40/50/100G, nomem */
+	{0x6805, "Chelsio T6225-SO-OCP3 VF"},	/* 2 x 10/25G, nomem */
+	{0x6806, "Chelsio T6225-OCP3 VF"},	/* 2 x 10/25G */
 	{0x6807, "Chelsio T62100-LP-CR VF"},	/* 2 x 40/50/100G */
 	{0x6808, "Chelsio T62100-SO-CR VF"},	/* 2 x 40/50/100G, nomem */
 	{0x6809, "Chelsio T6210-BT VF"},	/* 2 x 10GBASE-T */
 	{0x680d, "Chelsio T62100-CR VF"},	/* 2 x 40/50/100G */
 	{0x6810, "Chelsio T6-DBG-100 VF"},	/* 2 x 40/50/100G, debug */
 	{0x6811, "Chelsio T6225-LL-CR VF"},	/* 2 x 10/25G */
-	{0x6814, "Chelsio T61100-OCP-SO VF"},	/* 1 x 40/50/100G, nomem */
+	{0x6814, "Chelsio T62100-SO-OCP3 VF"},	/* 2 x 40/50/100G, nomem */
 	{0x6815, "Chelsio T6201-BT VF"},	/* 2 x 1000BASE-T */
 
 	/* Custom */
@@ -589,6 +589,10 @@ t4vf_attach(device_t dev)
 	if (rc != 0)
 		goto done; /* error message displayed already */
 
+	rc = t4_adj_doorbells(sc);
+	if (rc != 0)
+		goto done; /* error message displayed already */
+
 	rc = t4_create_dma_tag(sc);
 	if (rc != 0)
 		goto done; /* error message displayed already */
@@ -655,6 +659,8 @@ t4vf_attach(device_t dev)
 		if (rc == 0 && n == 1)
 			t4_os_set_hw_addr(pi, mac);
 		pmask &= ~(1 << p);
+
+		sc->vlan_id = t4vf_get_vf_vlan(sc);
 
 		/* No t4_link_start. */
 

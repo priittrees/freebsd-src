@@ -36,14 +36,11 @@
  *	@(#)kern_descrip.c	8.6 (Berkeley) 4/19/94
  */
 
-#include <sys/cdefs.h>
 #include "opt_capsicum.h"
 #include "opt_ddb.h"
 #include "opt_ktrace.h"
 
-#include <sys/param.h>
 #include <sys/systm.h>
-
 #include <sys/capsicum.h>
 #include <sys/conf.h>
 #include <sys/fcntl.h>
@@ -877,6 +874,8 @@ revert_f_setfl:
 
 	case F_KINFO:
 #ifdef CAPABILITY_MODE
+		if (CAP_TRACING(td))
+			ktrcapfail(CAPFAIL_SYSCALL, &cmd);
 		if (IN_CAPABILITY_MODE(td)) {
 			error = ECAPMODE;
 			break;
@@ -1620,6 +1619,8 @@ kern_fstat(struct thread *td, int fd, struct stat *sbp)
 
 	AUDIT_ARG_FILE(td->td_proc, fp);
 
+	sbp->st_filerev = 0;
+	sbp->st_bsdflags = 0;
 	error = fo_stat(fp, sbp, td->td_ucred);
 	fdrop(fp, td);
 #ifdef __STAT_TIME_T_EXT
@@ -2859,7 +2860,8 @@ closef_nothread(struct file *fp)
  * called with bad data.
  */
 void
-finit(struct file *fp, u_int flag, short type, void *data, struct fileops *ops)
+finit(struct file *fp, u_int flag, short type, void *data,
+    const struct fileops *ops)
 {
 	fp->f_data = data;
 	fp->f_flag = flag;
@@ -2868,7 +2870,7 @@ finit(struct file *fp, u_int flag, short type, void *data, struct fileops *ops)
 }
 
 void
-finit_vnode(struct file *fp, u_int flag, void *data, struct fileops *ops)
+finit_vnode(struct file *fp, u_int flag, void *data, const struct fileops *ops)
 {
 	fp->f_seqcount[UIO_READ] = 1;
 	fp->f_seqcount[UIO_WRITE] = 1;
@@ -2994,6 +2996,47 @@ fget_remote(struct thread *td, struct proc *p, int fd, struct file **fpp)
 	return (error);
 }
 
+int
+fget_remote_foreach(struct thread *td, struct proc *p,
+    int (*fn)(struct proc *, int, struct file *, void *), void *arg)
+{
+	struct filedesc *fdp;
+	struct fdescenttbl *fdt;
+	struct file *fp;
+	int error, error1, fd, highfd;
+
+	error = 0;
+	PROC_LOCK(p);
+	fdp = fdhold(p);
+	PROC_UNLOCK(p);
+	if (fdp == NULL)
+		return (ENOENT);
+
+	FILEDESC_SLOCK(fdp);
+	if (refcount_load(&fdp->fd_refcnt) != 0) {
+		fdt = atomic_load_ptr(&fdp->fd_files);
+		highfd = fdt->fdt_nfiles - 1;
+		FILEDESC_SUNLOCK(fdp);
+	} else {
+		error = ENOENT;
+		FILEDESC_SUNLOCK(fdp);
+		goto out;
+	}
+
+	for (fd = 0; fd <= highfd; fd++) {
+		error1 = fget_remote(td, p, fd, &fp);
+		if (error1 != 0)
+			continue;
+		error = fn(p, fd, fp, arg);
+		fdrop(fp, td);
+		if (error != 0)
+			break;
+	}
+out:
+	fddrop(fdp);
+	return (error);
+}
+
 #ifdef CAPABILITIES
 int
 fgetvp_lookup_smr(struct nameidata *ndp, struct vnode **vpp, bool *fsearch)
@@ -3054,7 +3097,7 @@ fgetvp_lookup_smr(struct nameidata *ndp, struct vnode **vpp, bool *fsearch)
 	    ndp->ni_filecaps.fc_fcntls != CAP_FCNTL_ALL ||
 	    ndp->ni_filecaps.fc_nioctls != -1) {
 #ifdef notyet
-		ndp->ni_lcf |= NI_LCF_STRICTRELATIVE;
+		ndp->ni_lcf |= NI_LCF_STRICTREL;
 #else
 		return (EAGAIN);
 #endif
@@ -3146,7 +3189,7 @@ fgetvp_lookup(struct nameidata *ndp, struct vnode **vpp)
 	if (!cap_rights_contains(&ndp->ni_filecaps.fc_rights, &rights) ||
 	    ndp->ni_filecaps.fc_fcntls != CAP_FCNTL_ALL ||
 	    ndp->ni_filecaps.fc_nioctls != -1) {
-		ndp->ni_lcf |= NI_LCF_STRICTRELATIVE;
+		ndp->ni_lcf |= NI_LCF_STRICTREL;
 		ndp->ni_resflags |= NIRES_STRICTREL;
 	}
 #endif
@@ -4329,12 +4372,42 @@ filedesc_to_leader_share(struct filedesc_to_leader *fdtol, struct filedesc *fdp)
 }
 
 static int
-sysctl_kern_proc_nfds(SYSCTL_HANDLER_ARGS)
+filedesc_nfiles(struct filedesc *fdp)
 {
 	NDSLOTTYPE *map;
-	struct filedesc *fdp;
-	u_int namelen;
 	int count, off, minoff;
+
+	if (fdp == NULL)
+		return (0);
+	count = 0;
+	FILEDESC_SLOCK(fdp);
+	map = fdp->fd_map;
+	off = NDSLOT(fdp->fd_nfiles - 1);
+	for (minoff = NDSLOT(0); off >= minoff; --off)
+		count += bitcountl(map[off]);
+	FILEDESC_SUNLOCK(fdp);
+	return (count);
+}
+
+int
+proc_nfiles(struct proc *p)
+{
+	struct filedesc *fdp;
+	int res;
+
+	PROC_LOCK(p);
+	fdp = fdhold(p);
+	PROC_UNLOCK(p);
+	res = filedesc_nfiles(fdp);
+	fddrop(fdp);
+	return (res);
+}
+
+static int
+sysctl_kern_proc_nfds(SYSCTL_HANDLER_ARGS)
+{
+	u_int namelen;
+	int count;
 
 	namelen = arg2;
 	if (namelen != 1)
@@ -4343,15 +4416,7 @@ sysctl_kern_proc_nfds(SYSCTL_HANDLER_ARGS)
 	if (*(int *)arg1 != 0)
 		return (EINVAL);
 
-	fdp = curproc->p_fd;
-	count = 0;
-	FILEDESC_SLOCK(fdp);
-	map = fdp->fd_map;
-	off = NDSLOT(fdp->fd_nfiles - 1);
-	for (minoff = NDSLOT(0); off >= minoff; --off)
-		count += bitcountl(map[off]);
-	FILEDESC_SUNLOCK(fdp);
-
+	count = filedesc_nfiles(curproc->p_fd);
 	return (SYSCTL_OUT(req, &count, sizeof(count)));
 }
 
@@ -5243,7 +5308,7 @@ badfo_fill_kinfo(struct file *fp, struct kinfo_file *kif, struct filedesc *fdp)
 	return (0);
 }
 
-struct fileops badfileops = {
+const struct fileops badfileops = {
 	.fo_read = badfo_readwrite,
 	.fo_write = badfo_readwrite,
 	.fo_truncate = badfo_truncate,
@@ -5274,7 +5339,7 @@ path_close(struct file *fp, struct thread *td)
 	return (0);
 }
 
-struct fileops path_fileops = {
+const struct fileops path_fileops = {
 	.fo_read = badfo_readwrite,
 	.fo_write = badfo_readwrite,
 	.fo_truncate = badfo_truncate,

@@ -597,8 +597,12 @@ void	bus_delete_resource(device_t dev, int type, int rid);
 int	bus_child_present(device_t child);
 int	bus_child_pnpinfo(device_t child, struct sbuf *sb);
 int	bus_child_location(device_t child, struct sbuf *sb);
+
+void	bus_attach_children(device_t dev);
+int	bus_detach_children(device_t dev);
 void	bus_enumerate_hinted_children(device_t bus);
 int	bus_delayed_attach_children(device_t bus);
+void	bus_identify_children(device_t dev);
 
 static __inline struct resource *
 bus_alloc_resource_any(device_t dev, int type, int *rid, u_int flags)
@@ -612,6 +616,43 @@ bus_alloc_resource_anywhere(device_t dev, int type, int *rid,
 {
 	return (bus_alloc_resource(dev, type, rid, 0, ~0, count, flags));
 }
+
+/* Compat shims for simpler bus resource API. */
+int	bus_adjust_resource_new(device_t child, struct resource *r,
+    rman_res_t start, rman_res_t end);
+int	bus_activate_resource_new(device_t dev, struct resource *r);
+int	bus_deactivate_resource_new(device_t dev, struct resource *r);
+int	bus_map_resource_new(device_t dev, struct resource *r,
+    struct resource_map_request *args, struct resource_map *map);
+int	bus_unmap_resource_new(device_t dev, struct resource *r,
+    struct resource_map *map);
+int	bus_release_resource_new(device_t dev, struct resource *r);
+
+#define	_BUS_API_MACRO(_1, _2, _3, _4, _5, NAME, ...)	NAME
+
+#define	bus_adjust_resource(...)					\
+	_BUS_API_MACRO(__VA_ARGS__, bus_adjust_resource,		\
+	    bus_adjust_resource_new)(__VA_ARGS__)
+
+#define	bus_activate_resource(...)					\
+	_BUS_API_MACRO(__VA_ARGS__, INVALID, bus_activate_resource,	\
+	    INVALID, bus_activate_resource_new)(__VA_ARGS__)
+
+#define	bus_deactivate_resource(...)					\
+	_BUS_API_MACRO(__VA_ARGS__, INVALID, bus_deactivate_resource,	\
+	    INVALID, bus_deactivate_resource_new)(__VA_ARGS__)
+
+#define	bus_map_resource(...)						\
+	_BUS_API_MACRO(__VA_ARGS__, bus_map_resource,			\
+	    bus_map_resource_new)(__VA_ARGS__)
+
+#define	bus_unmap_resource(...)						\
+	_BUS_API_MACRO(__VA_ARGS__, INVALID, bus_unmap_resource,	\
+	    bus_unmap_resource_new)(__VA_ARGS__)
+
+#define	bus_release_resource(...)					\
+	_BUS_API_MACRO(__VA_ARGS__, INVALID, bus_release_resource,	\
+	    INVALID, bus_release_resource_new)(__VA_ARGS__)
 
 /*
  * Access functions for device.
@@ -889,6 +930,14 @@ device_location_cache_t *dev_wired_cache_init(void);
 void dev_wired_cache_fini(device_location_cache_t *dcp);
 bool dev_wired_cache_match(device_location_cache_t *dcp, device_t dev, const char *at);
 
+#define	DEV_PROP_NAME_IOMMU	"iommu-unit"
+typedef void (*device_prop_dtr_t)(device_t dev, const char *name, void *val,
+    void *dtr_ctx);
+int device_set_prop(device_t dev, const char *name, void *val,
+    device_prop_dtr_t dtr, void *dtr_ctx);
+int device_get_prop(device_t dev, const char *name, void **valp);
+int device_clear_prop(device_t dev, const char *name);
+void device_clear_prop_alldev(const char *name);
 
 /**
  * Shorthand macros, taking resource argument

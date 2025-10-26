@@ -379,11 +379,7 @@ vdev_geom_io(struct g_consumer *cp, int *cmds, void **datas, off_t *offsets,
 	int i, n_bios, j;
 	size_t bios_size;
 
-#if __FreeBSD_version > 1300130
 	maxio = maxphys - (maxphys % cp->provider->sectorsize);
-#else
-	maxio = MAXPHYS - (MAXPHYS % cp->provider->sectorsize);
-#endif
 	n_bios = 0;
 
 	/* How many bios are required for all commands ? */
@@ -457,7 +453,7 @@ vdev_geom_read_config(struct g_consumer *cp, nvlist_t **configp)
 	ZFS_LOG(1, "Reading config from %s...", pp->name);
 
 	psize = pp->mediasize;
-	psize = P2ALIGN(psize, (uint64_t)sizeof (vdev_label_t));
+	psize = P2ALIGN_TYPED(psize, sizeof (vdev_label_t), uint64_t);
 
 	size = sizeof (*vdev_lists[0]) + pp->sectorsize -
 	    ((sizeof (*vdev_lists[0]) - 1) % pp->sectorsize) - 1;

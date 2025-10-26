@@ -85,6 +85,9 @@ static void print_registers(struct trapframe *frame);
 
 int (*dtrace_invop_jump_addr)(struct trapframe *);
 
+u_long cnt_efirt_faults;
+int print_efirt_faults;
+
 typedef void (abort_handler)(struct thread *, struct trapframe *, uint64_t,
     uint64_t, int);
 
@@ -496,9 +499,16 @@ do_el1h_sync(struct thread *td, struct trapframe *frame)
 	 * Enable debug exceptions if we aren't already handling one. They will
 	 * be masked again in the exception handler's epilogue.
 	 */
-	if (exception != EXCP_BRK && exception != EXCP_WATCHPT_EL1 &&
-	    exception != EXCP_SOFTSTP_EL1)
+	switch (exception) {
+	case EXCP_BRK:
+	case EXCP_BRKPT_EL1:
+	case EXCP_WATCHPT_EL1:
+	case EXCP_SOFTSTP_EL1:
+		break;
+	default:
 		dbg_enable();
+		break;
+	}
 
 	switch (exception) {
 	case EXCP_FP_SIMD:
@@ -531,11 +541,10 @@ do_el1h_sync(struct thread *td, struct trapframe *frame)
 		break;
 	case EXCP_BRK:
 #ifdef KDTRACE_HOOKS
-		if ((esr & ESR_ELx_ISS_MASK) == 0x40d && \
-		    dtrace_invop_jump_addr != 0) {
-			dtrace_invop_jump_addr(frame);
+		if ((esr & ESR_ELx_ISS_MASK) == 0x40d /* BRK_IMM16_VAL */ &&
+		    dtrace_invop_jump_addr != NULL &&
+		    dtrace_invop_jump_addr(frame) == 0)
 			break;
-		}
 #endif
 #ifdef KDB
 		kdb_trap(exception, 0, frame);
@@ -543,6 +552,7 @@ do_el1h_sync(struct thread *td, struct trapframe *frame)
 		panic("No debugger in kernel.");
 #endif
 		break;
+	case EXCP_BRKPT_EL1:
 	case EXCP_WATCHPT_EL1:
 	case EXCP_SOFTSTP_EL1:
 #ifdef KDB
@@ -627,8 +637,10 @@ do_el0_sync(struct thread *td, struct trapframe *frame)
 #endif
 		break;
 	case EXCP_SVE:
-		call_trapsignal(td, SIGILL, ILL_ILLTRP, (void *)frame->tf_elr,
-		    exception);
+		/* Returns true if this thread can use SVE */
+		if (!sve_restore_state(td))
+			call_trapsignal(td, SIGILL, ILL_ILLTRP,
+			    (void *)frame->tf_elr, exception);
 		userret(td, frame);
 		break;
 	case EXCP_SVC32:
@@ -722,7 +734,8 @@ do_el0_sync(struct thread *td, struct trapframe *frame)
 		break;
 	}
 
-	KASSERT((td->td_pcb->pcb_fpflags & ~PCB_FP_USERMASK) == 0,
+	KASSERT(
+	    (td->td_pcb->pcb_fpflags & ~(PCB_FP_USERMASK|PCB_FP_SVEVALID)) == 0,
 	    ("Kernel VFP flags set while entering userspace"));
 	KASSERT(
 	    td->td_pcb->pcb_fpusaved == &td->td_pcb->pcb_fpustate,

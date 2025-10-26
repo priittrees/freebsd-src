@@ -42,7 +42,6 @@
 
 #include <sys/param.h>
 #include <sys/systm.h>
-#include <sys/asan.h>
 #include <sys/bitstring.h>
 #include <sys/sysproto.h>
 #include <sys/eventhandler.h>
@@ -1021,19 +1020,9 @@ fork1(struct thread *td, struct fork_req *fr)
 		}
 		proc_linkup(newproc, td2);
 	} else {
-		kmsan_thread_alloc(td2);
-		if (td2->td_kstack == 0 || td2->td_kstack_pages != pages) {
-			if (td2->td_kstack != 0)
-				vm_thread_dispose(td2);
-			if (!thread_alloc_stack(td2, pages)) {
-				error = ENOMEM;
-				goto fail2;
-			}
-		} else {
-			kasan_mark((void *)td2->td_kstack,
-			    ptoa(td2->td_kstack_pages),
-			    ptoa(td2->td_kstack_pages), 0);
-		}
+		error = thread_recycle(td2, pages);
+		if (error != 0)
+			goto fail2;
 	}
 
 	if ((flags & RFMEM) == 0) {
@@ -1060,7 +1049,7 @@ fork1(struct thread *td, struct fork_req *fr)
 	 * XXX: This is ugly; when we copy resource usage, we need to bump
 	 *      per-cred resource counters.
 	 */
-	proc_set_cred_init(newproc, td->td_ucred);
+	newproc->p_ucred = crcowget(td->td_ucred);
 
 	/*
 	 * Initialize resource accounting for the child process.
@@ -1098,7 +1087,7 @@ fail0:
 #endif
 	racct_proc_exit(newproc);
 fail1:
-	proc_unset_cred(newproc);
+	proc_unset_cred(newproc, false);
 fail2:
 	if (vm2 != NULL)
 		vmspace_free(vm2);
