@@ -58,6 +58,37 @@ pr183198_cleanup()
 	pft_cleanup
 }
 
+atf_test_case "pr279225" "cleanup"
+pr279225_head()
+{
+	atf_set descr "Test that we can retrieve longer anchor names, PR 279225"
+	atf_set require.user root
+}
+
+pr279225_body()
+{
+	pft_init
+
+	vnet_mkjail alcatraz
+
+	pft_set_rules alcatraz \
+		"nat-anchor \"appjail-nat/jail/*\" all" \
+		"rdr-anchor \"appjail-rdr/*\" all" \
+		"anchor \"appjail/jail/*\" all"
+
+	atf_check -s exit:0 -o match:"nat-anchor \"appjail-nat/jail/\*\" all \{" \
+		jexec alcatraz pfctl -sn -a "*"
+	atf_check -s exit:0 -o match:"rdr-anchor \"appjail-rdr/\*\" all \{" \
+		jexec alcatraz pfctl -sn -a "*"
+	atf_check -s exit:0 -o match:"anchor \"appjail/jail/\*\" all \{" \
+		jexec alcatraz pfctl -sr -a "*"
+}
+
+pr279225_cleanup()
+{
+	pft_cleanup
+}
+
 atf_test_case "nested_anchor" "cleanup"
 nested_anchor_head()
 {
@@ -130,9 +161,56 @@ wildcard_cleanup()
 	pft_cleanup
 }
 
+atf_test_case "nat" "cleanup"
+nat_head()
+{
+	atf_set descr 'Test nested nat anchors'
+	atf_set require.user root
+}
+
+nat_body()
+{
+	pft_init
+
+	epair=$(vnet_mkepair)
+	vnet_mkjail alcatraz ${epair}a
+
+	ifconfig ${epair}b 192.0.2.2/24 up
+	jexec alcatraz ifconfig ${epair}a 192.0.2.1/24 up
+
+	# Sanity check
+	atf_check -s exit:0 -o ignore ping -c 1 192.0.2.1
+
+	jexec alcatraz pfctl -e
+	pft_set_rules alcatraz \
+	    "nat-anchor \"foo/*\"" \
+	    "pass"
+
+	echo "nat log on ${epair}a inet from 192.0.2.0/24 to any port = 53 -> 192.0.2.1" \
+	    | jexec alcatraz pfctl -a "foo/bar" -g -f -
+	echo "rdr on ${epair}a proto tcp to port echo -> 127.0.0.1 port echo" \
+	    | jexec alcatraz pfctl -a "foo/baz" -g -f -
+
+	jexec alcatraz pfctl -sn -a "*"
+	jexec alcatraz pfctl -sn -a "foo/bar"
+	jexec alcatraz pfctl -sn -a "foo/baz"
+
+	atf_check -s exit:0 -o match:"nat log on epair0a inet from 192.0.2.0/24 to any port = domain -> 192.0.2.1" \
+	    jexec alcatraz pfctl -sn -a "*"
+	atf_check -s exit:0 -o match:"rdr on epair0a inet proto tcp from any to any port = echo -> 127.0.0.1 port 7" \
+	    jexec alcatraz pfctl -sn -a "*"
+}
+
+nat_cleanup()
+{
+	pft_cleanup
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case "pr183198"
+	atf_add_test_case "pr279225"
 	atf_add_test_case "nested_anchor"
 	atf_add_test_case "wildcard"
+	atf_add_test_case "nat"
 }

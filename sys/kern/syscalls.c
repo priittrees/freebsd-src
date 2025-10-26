@@ -594,4 +594,7 @@ const char *syscallnames[] = {
 	"timerfd_gettime",			/* 586 = timerfd_gettime */
 	"timerfd_settime",			/* 587 = timerfd_settime */
 	"kcmp",			/* 588 = kcmp */
+	"getrlimitusage",			/* 589 = getrlimitusage */
+	"#590",			/* 590 = fchroot */
+	"setcred",			/* 591 = setcred */
 };

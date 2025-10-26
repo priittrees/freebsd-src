@@ -310,15 +310,6 @@ smmu_write_ack(struct smmu_softc *sc, uint32_t reg,
 	return (0);
 }
 
-static inline int
-ilog2(long x)
-{
-
-	KASSERT(x > 0 && powerof2(x), ("%s: invalid arg %ld", __func__, x));
-
-	return (flsl(x) - 1);
-}
-
 static int
 smmu_init_queue(struct smmu_softc *sc, struct smmu_queue *q,
     uint32_t prod_off, uint32_t cons_off, uint32_t dwords)
@@ -971,10 +962,6 @@ smmu_init_strtab_2lvl(struct smmu_softc *sc)
 	sz = strtab->num_l1_entries * sizeof(struct l1_desc);
 
 	strtab->l1 = malloc(sz, M_SMMU, M_WAITOK | M_ZERO);
-	if (strtab->l1 == NULL) {
-		contigfree(strtab->vaddr, l1size, M_SMMU);
-		return (ENOMEM);
-	}
 
 	reg = STRTAB_BASE_CFG_FMT_2LVL;
 	reg |= size << STRTAB_BASE_CFG_LOG2SIZE_S;

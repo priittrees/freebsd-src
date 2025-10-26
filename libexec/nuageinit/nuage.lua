@@ -1,15 +1,25 @@
+---
 -- SPDX-License-Identifier: BSD-2-Clause
 --
--- Copyright(c) 2022 Baptiste Daroussin <bapt@FreeBSD.org>
+-- Copyright(c) 2022-2025 Baptiste Daroussin <bapt@FreeBSD.org>
 
-local pu = require("posix.unistd")
+local unistd = require("posix.unistd")
+local sys_stat = require("posix.sys.stat")
+local lfs = require("lfs")
 
-local function warnmsg(str)
-	io.stderr:write(str.."\n")
+local function warnmsg(str, prepend)
+	if not str then
+		return
+	end
+	local tag = ""
+	if prepend ~= false then
+		tag = "nuageinit: "
+	end
+	io.stderr:write(tag .. str .. "\n")
 end
 
-local function errmsg(str)
-	io.stderr:write(str.."\n")
+local function errmsg(str, prepend)
+	warnmsg(str, prepend)
 	os.exit(1)
 end
 
@@ -28,15 +38,17 @@ local function mkdir_p(path)
 	if lfs.attributes(path, "mode") ~= nil then
 		return true
 	end
-	local r,err = mkdir_p(dirname(path))
+	local r, err = mkdir_p(dirname(path))
 	if not r then
-		return nil,err.." (creating "..path..")"
+		return nil, err .. " (creating " .. path .. ")"
 	end
 	return lfs.mkdir(path)
 end
 
 local function sethostname(hostname)
-	if hostname == nil then return end
+	if hostname == nil then
+		return
+	end
 	local root = os.getenv("NUAGE_FAKE_ROOTDIR")
 	if not root then
 		root = ""
@@ -44,12 +56,12 @@ local function sethostname(hostname)
 	local hostnamepath = root .. "/etc/rc.conf.d/hostname"
 
 	mkdir_p(dirname(hostnamepath))
-	local f,err = io.open(hostnamepath, "w")
+	local f, err = io.open(hostnamepath, "w")
 	if not f then
-		warnmsg("Impossible to open "..hostnamepath .. ":" ..err)
+		warnmsg("Impossible to open " .. hostnamepath .. ":" .. err)
 		return
 	end
-	f:write("hostname=\""..hostname.."\"\n")
+	f:write('hostname="' .. hostname .. '"\n')
 	f:close()
 end
 
@@ -62,7 +74,7 @@ local function splitlist(list)
 	elseif type(list) == "table" then
 		ret = list
 	else
-		warnmsg("Invalid type ".. type(list) ..", expecting table or string")
+		warnmsg("Invalid type " .. type(list) .. ", expecting table or string")
 	end
 	return ret
 end
@@ -72,7 +84,12 @@ local function adduser(pwd)
 		warnmsg("Argument should be a table")
 		return nil
 	end
-	local f = io.popen("getent passwd "..pwd.name)
+	local root = os.getenv("NUAGE_FAKE_ROOTDIR")
+	local cmd = "pw "
+	if root then
+		cmd = cmd .. "-R " .. root .. " "
+	end
+	local f = io.popen(cmd .. " usershow " .. pwd.name .. " -7 2> /dev/null")
 	local pwdstr = f:read("*a")
 	f:close()
 	if pwdstr:len() ~= 0 then
@@ -81,13 +98,13 @@ local function adduser(pwd)
 	if not pwd.gecos then
 		pwd.gecos = pwd.name .. " User"
 	end
-	if not pwd.home then
-		pwd.home = "/home/" .. pwd.name
+	if not pwd.homedir then
+		pwd.homedir = "/home/" .. pwd.name
 	end
-	local extraargs=""
+	local extraargs = ""
 	if pwd.groups then
 		local list = splitlist(pwd.groups)
-		extraargs = " -G ".. table.concat(list, ',')
+		extraargs = " -G " .. table.concat(list, ",")
 	end
 	-- pw will automatically create a group named after the username
 	-- do not add a -g option in this case
@@ -102,25 +119,29 @@ local function adduser(pwd)
 	end
 	local precmd = ""
 	local postcmd = ""
+	local input = nil
 	if pwd.passwd then
-		precmd = "echo "..pwd.passwd .. "| "
-		postcmd = " -H 0 "
+		input = pwd.passwd
+		postcmd = " -H 0"
 	elseif pwd.plain_text_passwd then
-		precmd = "echo "..pwd.plain_text_passwd .. "| "
-		postcmd = " -H 0 "
+		input = pwd.plain_text_passwd
+		postcmd = " -h 0"
 	end
-	local root = os.getenv("NUAGE_FAKE_ROOTDIR")
-	local cmd = precmd .. "pw "
+	cmd = precmd .. "pw "
 	if root then
 		cmd = cmd .. "-R " .. root .. " "
 	end
-	cmd = cmd .. "useradd -n ".. pwd.name .. " -M 0755 -w none "
-	cmd = cmd .. extraargs .. " -c '".. pwd.gecos
-	cmd = cmd .. "' -d '" .. pwd.home .. "' -s "..pwd.shell .. postcmd
+	cmd = cmd .. "useradd -n " .. pwd.name .. " -M 0755 -w none "
+	cmd = cmd .. extraargs .. " -c '" .. pwd.gecos
+	cmd = cmd .. "' -d '" .. pwd.homedir .. "' -s " .. pwd.shell .. postcmd
 
-	local r = os.execute(cmd)
+	f = io.popen(cmd, "w")
+	if input then
+		f:write(input)
+	end
+	local r = f:close(cmd)
 	if not r then
-		warnmsg("nuageinit: fail to add user "..pwd.name);
+		warnmsg("fail to add user " .. pwd.name)
 		warnmsg(cmd)
 		return nil
 	end
@@ -132,7 +153,7 @@ local function adduser(pwd)
 		cmd = cmd .. "lock " .. pwd.name
 		os.execute(cmd)
 	end
-	return pwd.home
+	return pwd.homedir
 end
 
 local function addgroup(grp)
@@ -140,7 +161,12 @@ local function addgroup(grp)
 		warnmsg("Argument should be a table")
 		return false
 	end
-	local f = io.popen("getent group "..grp.name)
+	local root = os.getenv("NUAGE_FAKE_ROOTDIR")
+	local cmd = "pw "
+	if root then
+		cmd = cmd .. "-R " .. root .. " "
+	end
+	local f = io.popen(cmd .. " groupshow " .. grp.name .. " 2> /dev/null")
 	local grpstr = f:read("*a")
 	f:close()
 	if grpstr:len() ~= 0 then
@@ -149,17 +175,16 @@ local function addgroup(grp)
 	local extraargs = ""
 	if grp.members then
 		local list = splitlist(grp.members)
-		extraargs = " -M " .. table.concat(list, ',')
+		extraargs = " -M " .. table.concat(list, ",")
 	end
-	local root = os.getenv("NUAGE_FAKE_ROOTDIR")
-	local cmd = "pw "
+	cmd = "pw "
 	if root then
 		cmd = cmd .. "-R " .. root .. " "
 	end
-	cmd = cmd .. "groupadd -n ".. grp.name .. extraargs
+	cmd = cmd .. "groupadd -n " .. grp.name .. extraargs
 	local r = os.execute(cmd)
 	if not r then
-		warnmsg("nuageinit: fail to add group ".. grp.name);
+		warnmsg("fail to add group " .. grp.name)
 		warnmsg(cmd)
 		return false
 	end
@@ -169,6 +194,10 @@ end
 local function addsshkey(homedir, key)
 	local chownak = false
 	local chowndotssh = false
+	local root = os.getenv("NUAGE_FAKE_ROOTDIR")
+	if root then
+		homedir = root .. "/" .. homedir
+	end
 	local ak_path = homedir .. "/.ssh/authorized_keys"
 	local dotssh_path = homedir .. "/.ssh"
 	local dirattrs = lfs.attributes(ak_path)
@@ -176,10 +205,7 @@ local function addsshkey(homedir, key)
 		chownak = true
 		dirattrs = lfs.attributes(dotssh_path)
 		if dirattrs == nil then
-			if not lfs.mkdir(dotssh_path) then
-				warnmsg("nuageinit: impossible to create ".. dotssh_path)
-				return
-			end
+			assert(lfs.mkdir(dotssh_path))
 			chowndotssh = true
 			dirattrs = lfs.attributes(homedir)
 		end
@@ -187,28 +213,165 @@ local function addsshkey(homedir, key)
 
 	local f = io.open(ak_path, "a")
 	if not f then
-		warnmsg("nuageinit: impossible to open "..ak_path)
+		warnmsg("impossible to open " .. ak_path)
 		return
 	end
 	f:write(key .. "\n")
 	f:close()
 	if chownak then
-		pu.chown(ak_path, dirattrs.uid, dirattrs.gid)
+		sys_stat.chmod(ak_path, 384)
+		unistd.chown(ak_path, dirattrs.uid, dirattrs.gid)
 	end
 	if chowndotssh then
-		pu.chown(dotssh_path, dirattrs.uid, dirattrs.gid)
+		sys_stat.chmod(dotssh_path, 448)
+		unistd.chown(dotssh_path, dirattrs.uid, dirattrs.gid)
+	end
+end
+
+local function update_sshd_config(key, value)
+	local sshd_config = "/etc/ssh/sshd_config"
+	local root = os.getenv("NUAGE_FAKE_ROOTDIR")
+	if root then
+		sshd_config = root .. sshd_config
+	end
+	local f = assert(io.open(sshd_config, "r+"))
+	local tgt = assert(io.open(sshd_config .. ".nuageinit", "w"))
+	local found = false
+	local pattern = "^%s*"..key:lower().."%s+(%w+)%s*#?.*$"
+	while true do
+		local line = f:read()
+		if line == nil then break end
+		local _, _, val = line:lower():find(pattern)
+		if val then
+			found = true
+			if val == value then
+				assert(tgt:write(line .. "\n"))
+			else
+				assert(tgt:write(key .. " " .. value .. "\n"))
+			end
+		else
+			assert(tgt:write(line .. "\n"))
+		end
+	end
+	if not found then
+		assert(tgt:write(key .. " " .. value .. "\n"))
+	end
+	assert(f:close())
+	assert(tgt:close())
+	os.rename(sshd_config .. ".nuageinit", sshd_config)
+end
+
+local function exec_change_password(user, password, type, expire)
+	local root = os.getenv("NUAGE_FAKE_ROOTDIR")
+	local cmd = "pw "
+	if root then
+		cmd = cmd .. "-R " .. root .. " "
+	end
+	local postcmd = " -H 0"
+	local input = password
+	if type ~= nil and type == "text" then
+		postcmd = " -h 0"
+	else
+		if password == "RANDOM" then
+			input = nil
+			postcmd = " -w random"
+		end
+	end
+	cmd = cmd .. "usermod " .. user .. postcmd
+	if expire then
+		cmd = cmd .. " -p 1"
+	else
+		cmd = cmd .. " -p 0"
+	end
+	local f = io.popen(cmd .. " >/dev/null", "w")
+	if input then
+		f:write(input)
+	end
+	-- ignore stdout to avoid printing the password in case of random password
+	local r = f:close(cmd)
+	if not r then
+		warnmsg("fail to change user password ".. user)
+		warnmsg(cmd)
+	end
+end
+
+local function change_password_from_line(line, expire)
+	local user, password = line:match("%s*(%w+):(%S+)%s*")
+	local type = nil
+	if user and password then
+		if password == "R" then
+			password = "RANDOM"
+		end
+		if not password:match("^%$%d+%$%w+%$") then
+			if password ~= "RANDOM" then
+				type = "text"
+			end
+		end
+		exec_change_password(user, password, type, expire)
+	end
+end
+
+local function chpasswd(obj)
+	if type(obj) ~= "table" then
+		warnmsg("Invalid chpasswd entry, expecting an object")
+		return
+	end
+	local expire = false
+	if obj.expire ~= nil then
+		if type(obj.expire) == "boolean" then
+			expire = obj.expire
+		else
+			warnmsg("Invalid type for chpasswd.expire, expecting a boolean, got a ".. type(obj.expire))
+		end
+	end
+	if obj.users ~= nil then
+		if type(obj.users) ~= "table" then
+			warnmsg("Invalid type for chpasswd.users, expecting a list, got a ".. type(obj.users))
+			goto list
+		end
+		for _, u in ipairs(obj.users) do
+			if type(u) ~= "table" then
+				warnmsg("Invalid chpasswd.users entry, expecting an object, got a " .. type(u))
+				goto next
+			end
+			if not u.name then
+				warnmsg("Invalid entry for chpasswd.users: missing 'name'")
+				goto next
+			end
+			if not u.password then
+				warnmsg("Invalid entry for chpasswd.users: missing 'password'")
+				goto next
+			end
+			exec_change_password(u.name, u.password, u.type, expire)
+			::next::
+		end
+	end
+	::list::
+	if obj.list ~= nil then
+		warnmsg("chpasswd.list is deprecated consider using chpasswd.users")
+		if type(obj.list) == "string" then
+			for line in obj.list:gmatch("[^\n]+") do
+				change_password_from_line(line, expire)
+			end
+		elseif type(obj.list) == "table" then
+			for _, u in ipairs(obj.list) do
+				change_password_from_line(u, expire)
+			end
+		end
 	end
 end
 
 local n = {
 	warn = warnmsg,
 	err = errmsg,
+	dirname = dirname,
+	mkdir_p = mkdir_p,
 	sethostname = sethostname,
 	adduser = adduser,
 	addgroup = addgroup,
 	addsshkey = addsshkey,
-	dirname = dirname,
-	mkdir_p = mkdir_p,
+	update_sshd_config = update_sshd_config,
+	chpasswd = chpasswd
 }
 
 return n

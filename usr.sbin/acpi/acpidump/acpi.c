@@ -1222,13 +1222,14 @@ acpi_handle_tcpa(ACPI_TABLE_HEADER *sdp)
 	vend = vaddr + len;
 
 	while (vaddr != NULL) {
-		if ((vaddr + sizeof(struct TCPAevent) >= vend)||
-		    (vaddr + sizeof(struct TCPAevent) < vaddr))
+		if ((uintptr_t)vaddr + sizeof(struct TCPAevent) >=
+		    (uintptr_t)vend || (uintptr_t)vaddr + sizeof(
+		    struct TCPAevent) < (uintptr_t)vaddr)
 			break;
 		event = (struct TCPAevent *)(void *)vaddr;
-		if (vaddr + event->event_size >= vend)
+		if ((uintptr_t)vaddr + event->event_size >= (uintptr_t)vend)
 			break;
-		if (vaddr + event->event_size < vaddr)
+		if ((uintptr_t)vaddr + event->event_size < (uintptr_t)vaddr)
 			break;
 		if (event->event_type == 0 && event->event_size == 0)
 			break;
@@ -1275,14 +1276,16 @@ devscope_type2str(int type)
 	static char typebuf[16];
 
 	switch (type) {
-	case 1:
+	case ACPI_DMAR_SCOPE_TYPE_ENDPOINT:
 		return ("PCI Endpoint Device");
-	case 2:
+	case ACPI_DMAR_SCOPE_TYPE_BRIDGE:
 		return ("PCI Sub-Hierarchy");
-	case 3:
+	case ACPI_DMAR_SCOPE_TYPE_IOAPIC:
 		return ("IOAPIC");
-	case 4:
+	case ACPI_DMAR_SCOPE_TYPE_HPET:
 		return ("HPET");
+	case ACPI_DMAR_SCOPE_TYPE_NAMESPACE:
+		return ("ACPI NS DEV");
 	default:
 		snprintf(typebuf, sizeof(typebuf), "%d", type);
 		return (typebuf);
@@ -1504,7 +1507,7 @@ acpi_handle_dmar(ACPI_TABLE_HEADER *sdp)
 static void
 acpi_handle_ivrs_ivhd_header(ACPI_IVRS_HEADER *addr)
 {
-	printf("\n\tIVHD Type=%#x IOMMUId=%x\n\tFlags=",
+	printf("\n\tIVHD Type=%#x IOMMU DeviceId=%#06x\n\tFlags=",
 	    addr->Type, addr->DeviceId);
 #define PRINTFLAG(flag, name) printflag(addr->Flags, flag, #name)
 	PRINTFLAG(ACPI_IVHD_TT_ENABLE, HtTunEn);
@@ -1629,8 +1632,8 @@ acpi_handle_ivrs_ivhd_devs(ACPI_IVRS_DE_HEADER *d, char *de)
 		} else if (d->Type == ACPI_IVRS_TYPE_EXT_START) {
 			d8b = (ACPI_IVRS_DEVICE8B *)db;
 			len = sizeof(*d8b);
-			d4 = (ACPI_IVRS_DEVICE4 *)(db + sizeof(*d8a));
-			len = sizeof(*d8a) + sizeof(*d4);
+			d4 = (ACPI_IVRS_DEVICE4 *)(db + sizeof(*d8b));
+			len = sizeof(*d8b) + sizeof(*d4);
 			printf("\t\tDev Type=%#x Id=%#06x-%#06x",
 			    d8a->Header.Type, d8a->Header.Id, d4->Header.Id);
 			acpi_handle_ivrs_ivhd_dte(d8b->Header.DataSetting);
@@ -2619,7 +2622,7 @@ aml_disassemble(ACPI_TABLE_HEADER *rsdt, ACPI_TABLE_HEADER *dsdp)
 		goto out;
 	}
 	if (status != 0) {
-		fprintf(stderr, "iast exit status = %d\n", status);
+		fprintf(stderr, "iasl exit status = %d\n", status);
 	}
 
 	/* Dump iasl's output to stdout */

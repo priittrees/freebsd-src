@@ -425,33 +425,45 @@ post_p_rtnh(void *_attrs, struct nl_pstate *npt __unused)
 NL_DECLARE_PARSER_EXT(mpath_parser, struct rtnexthop, NULL, nlf_p_rtnh, nla_p_rtnh, post_p_rtnh);
 
 struct rta_mpath {
-	int num_nhops;
+	u_int num_nhops;
 	struct rta_mpath_nh nhops[0];
 };
 
 static int
-nlattr_get_multipath(struct nlattr *nla, struct nl_pstate *npt, const void *arg, void *target)
+nlattr_get_multipath(struct nlattr *nla, struct nl_pstate *npt,
+    const void *arg, void *target)
 {
-	int data_len = nla->nla_len - sizeof(struct nlattr);
+	struct rta_mpath *mp;
 	struct rtnexthop *rtnh;
+	uint16_t data_len, len;
+	u_int max_nhops;
+	int error;
 
-	int max_nhops = data_len / sizeof(struct rtnexthop);
+	data_len = nla->nla_len - sizeof(struct nlattr);
+	max_nhops = data_len / sizeof(struct rtnexthop);
 
-	struct rta_mpath *mp = npt_alloc(npt, (max_nhops + 2) * sizeof(struct rta_mpath_nh));
+	mp = npt_alloc(npt, (max_nhops + 2) * sizeof(struct rta_mpath_nh));
 	mp->num_nhops = 0;
 
 	for (rtnh = (struct rtnexthop *)(nla + 1); data_len > 0; ) {
-		struct rta_mpath_nh *mpnh = &mp->nhops[mp->num_nhops++];
+		struct rta_mpath_nh *mpnh;
 
-		int error = nl_parse_header(rtnh, rtnh->rtnh_len, &mpath_parser,
+		if (__predict_false(rtnh->rtnh_len <= sizeof(*rtnh) ||
+		    rtnh->rtnh_len > data_len)) {
+			NLMSG_REPORT_ERR_MSG(npt, "%s: bad length %u",
+			    __func__, rtnh->rtnh_len);
+			return (EINVAL);
+		}
+		mpnh = &mp->nhops[mp->num_nhops++];
+		error = nl_parse_header(rtnh, rtnh->rtnh_len, &mpath_parser,
 		    npt, mpnh);
 		if (error != 0) {
-			NLMSG_REPORT_ERR_MSG(npt, "RTA_MULTIPATH: nexhop %d: parse failed",
+			NLMSG_REPORT_ERR_MSG(npt,
+			    "RTA_MULTIPATH: nexthop %u: parse failed",
 			    mp->num_nhops - 1);
 			return (error);
 		}
-
-		int len = NL_ITEM_ALIGN(rtnh->rtnh_len);
+		len = NL_ITEM_ALIGN(rtnh->rtnh_len);
 		data_len -= len;
 		rtnh = (struct rtnexthop *)((char *)rtnh + len);
 	}
@@ -475,6 +487,7 @@ struct nl_parsed_route {
 	uint32_t		rta_nh_id;
 	uint32_t		rta_weight;
 	uint32_t		rtax_mtu;
+	uint8_t			rtm_table;
 	uint8_t			rtm_family;
 	uint8_t			rtm_dst_len;
 	uint8_t			rtm_protocol;
@@ -507,6 +520,7 @@ static const struct nlfield_parser nlf_p_rtmsg[] = {
 	{ .off_in = _IN(rtm_dst_len), .off_out = _OUT(rtm_dst_len), .cb = nlf_get_u8 },
 	{ .off_in = _IN(rtm_protocol), .off_out = _OUT(rtm_protocol), .cb = nlf_get_u8 },
 	{ .off_in = _IN(rtm_type), .off_out = _OUT(rtm_type), .cb = nlf_get_u8 },
+	{ .off_in = _IN(rtm_table), .off_out = _OUT(rtm_table), .cb = nlf_get_u8 },
 	{ .off_in = _IN(rtm_flags), .off_out = _OUT(rtm_flags), .cb = nlf_get_u32 },
 };
 #undef _IN
@@ -939,7 +953,10 @@ rtnl_handle_newroute(struct nlmsghdr *hdr, struct nlpcb *nlp,
 		return (EINVAL);
 	}
 
-	if (attrs.rta_table >= V_rt_numfibs) {
+	/* pre-2.6.19 Linux API compatibility */
+	if (attrs.rtm_table > 0 && attrs.rta_table == 0)
+		attrs.rta_table = attrs.rtm_table;
+	if (attrs.rta_table >= V_rt_numfibs || attrs.rtm_family > AF_MAX) {
 		NLMSG_REPORT_ERR_MSG(npt, "invalid fib");
 		return (EINVAL);
 	}
@@ -1002,13 +1019,14 @@ rtnl_handle_delroute(struct nlmsghdr *hdr, struct nlpcb *nlp,
 		return (ESRCH);
 	}
 
-	if (attrs.rta_table >= V_rt_numfibs) {
+	if (attrs.rta_table >= V_rt_numfibs || attrs.rtm_family > AF_MAX) {
 		NLMSG_REPORT_ERR_MSG(npt, "invalid fib");
 		return (EINVAL);
 	}
 
 	error = rib_del_route_px(attrs.rta_table, attrs.rta_dst,
-	    attrs.rtm_dst_len, path_match_func, &attrs, 0, &rc);
+	    attrs.rtm_dst_len, path_match_func, &attrs,
+	    (attrs.rta_rtflags & RTF_PINNED) ? RTM_F_FORCE : 0, &rc);
 	if (error == 0)
 		report_operation(attrs.rta_table, &rc, nlp, hdr);
 	return (error);
@@ -1024,7 +1042,7 @@ rtnl_handle_getroute(struct nlmsghdr *hdr, struct nlpcb *nlp, struct nl_pstate *
 	if (error != 0)
 		return (error);
 
-	if (attrs.rta_table >= V_rt_numfibs) {
+	if (attrs.rta_table >= V_rt_numfibs || attrs.rtm_family > AF_MAX) {
 		NLMSG_REPORT_ERR_MSG(npt, "invalid fib");
 		return (EINVAL);
 	}

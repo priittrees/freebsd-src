@@ -16,8 +16,8 @@ src = @abs_srcdir@
 obj = @abs_builddir@
 else
 zfs_include = $(srctree)/include/zfs
-icp_include = $(srctree)/$(src)/icp/include
-zstd_include = $(srctree)/$(src)/zstd/include
+icp_include = $(src)/icp/include
+zstd_include = $(src)/zstd/include
 ZFS_MODULE_CFLAGS += -include $(zfs_include)/zfs_config.h
 endif
 
@@ -236,6 +236,7 @@ zfs-objs += $(addprefix unicode/,$(UNICODE_OBJS))
 
 ZCOMMON_OBJS := \
 	cityhash.o \
+	simd_stat.o \
 	zfeature_common.o \
 	zfs_comutil.o \
 	zfs_deleg.o \
@@ -244,6 +245,7 @@ ZCOMMON_OBJS := \
 	zfs_fletcher_superscalar4.o \
 	zfs_namecheck.o \
 	zfs_prop.o \
+	zfs_valstr.o \
 	zpool_prop.o \
 	zprop_common.o
 
@@ -424,6 +426,7 @@ ZFS_OBJS := \
 	zfs_rlock.o \
 	zfs_sa.o \
 	zfs_vnops.o \
+	zfs_znode.o \
 	zil.o \
 	zio.o \
 	zio_checksum.o \
@@ -457,7 +460,7 @@ ZFS_OBJS_OS := \
 	zfs_uio.o \
 	zfs_vfsops.o \
 	zfs_vnops_os.o \
-	zfs_znode.o \
+	zfs_znode_os.o \
 	zio_crypt.o \
 	zpl_ctldir.o \
 	zpl_export.o \
@@ -492,6 +495,8 @@ zfs-$(CONFIG_PPC64) += $(addprefix zfs/,$(ZFS_OBJS_PPC_PPC64))
 UBSAN_SANITIZE_zap_leaf.o := n
 UBSAN_SANITIZE_zap_micro.o := n
 UBSAN_SANITIZE_sa.o := n
+UBSAN_SANITIZE_zfs/zap_micro.o := n
+UBSAN_SANITIZE_zfs/sa.o := n
 
 # Suppress incorrect warnings from versions of objtool which are not
 # aware of x86 EVEX prefix instructions used for AVX512.

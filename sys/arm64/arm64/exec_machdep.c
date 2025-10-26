@@ -462,8 +462,13 @@ int
 set_mcontext(struct thread *td, mcontext_t *mcp)
 {
 #define	PSR_13_MASK	0xfffffffful
+	struct arm64_reg_context ctx;
 	struct trapframe *tf = td->td_frame;
+	struct pcb *pcb;
 	uint64_t spsr;
+	vm_offset_t addr;
+	int error, seen_types;
+	bool done;
 
 	spsr = mcp->mc_gpregs.gp_spsr;
 #ifdef COMPAT_FREEBSD13
@@ -502,7 +507,72 @@ set_mcontext(struct thread *td, mcontext_t *mcp)
 		    READ_SPECIALREG(mdscr_el1) | MDSCR_SS);
 		isb();
 	}
+
 	set_fpcontext(td, mcp);
+
+	/* Read any register contexts we find */
+	if (mcp->mc_ptr != 0) {
+		addr = mcp->mc_ptr;
+		pcb = td->td_pcb;
+
+#define	CTX_TYPE_FLAG_SVE	(1 << 0)
+
+		seen_types = 0;
+		done = false;
+		do {
+			if (!__is_aligned(addr,
+			    _Alignof(struct arm64_reg_context)))
+				return (EINVAL);
+
+			error = copyin((const void *)addr, &ctx, sizeof(ctx));
+			if (error != 0)
+				return (error);
+
+			switch (ctx.ctx_id) {
+#ifdef VFP
+			case ARM64_CTX_SVE: {
+				struct sve_context sve_ctx;
+				size_t buf_size;
+
+				if ((seen_types & CTX_TYPE_FLAG_SVE) != 0)
+					return (EINVAL);
+				seen_types |= CTX_TYPE_FLAG_SVE;
+
+				if (pcb->pcb_svesaved == NULL)
+					return (EINVAL);
+
+				/* XXX: Check pcb_svesaved is valid */
+
+				buf_size = sve_buf_size(td);
+				/* Check the size is valid */
+				if (ctx.ctx_size !=
+				    (sizeof(sve_ctx) + buf_size))
+					return (EINVAL);
+
+				memset(pcb->pcb_svesaved, 0,
+				    sve_max_buf_size());
+
+				/* Copy the SVE registers from userspace */
+				if (copyin((void *)(addr + sizeof(sve_ctx)),
+				    pcb->pcb_svesaved, buf_size) != 0)
+					return (EINVAL);
+
+				pcb->pcb_fpflags |= PCB_FP_SVEVALID;
+				break;
+			}
+#endif
+			case ARM64_CTX_END:
+				done = true;
+				break;
+			default:
+				return (EINVAL);
+			}
+
+			addr += ctx.ctx_size;
+		} while (!done);
+
+#undef CTX_TYPE_FLAG_SVE
+	}
 
 	return (0);
 #undef PSR_13_MASK
@@ -562,7 +632,7 @@ set_fpcontext(struct thread *td, mcontext_t *mcp)
 		    sizeof(mcp->mc_fpregs.fp_q));
 		curpcb->pcb_fpustate.vfp_fpcr = mcp->mc_fpregs.fp_cr;
 		curpcb->pcb_fpustate.vfp_fpsr = mcp->mc_fpregs.fp_sr;
-		curpcb->pcb_fpflags = mcp->mc_fpregs.fp_flags & PCB_FP_USERMASK;
+		curpcb->pcb_fpflags = mcp->mc_fpregs.fp_flags & PCB_FP_STARTED;
 	}
 #endif
 }
@@ -576,15 +646,87 @@ sys_sigreturn(struct thread *td, struct sigreturn_args *uap)
 	if (copyin(uap->sigcntxp, &uc, sizeof(uc)))
 		return (EFAULT);
 
+	/* Stop an interrupt from causing the sve state to be dropped */
+	td->td_sa.code = -1;
 	error = set_mcontext(td, &uc.uc_mcontext);
 	if (error != 0)
 		return (error);
+
+	/*
+	 * Sync the VFP and SVE registers. To be backwards compatible we
+	 * use the VFP registers to restore the lower bits of the SVE
+	 * register it aliases.
+	 */
+	vfp_to_sve_sync(td);
 
 	/* Restore signal mask. */
 	kern_sigprocmask(td, SIG_SETMASK, &uc.uc_sigmask, NULL, 0);
 
 	return (EJUSTRETURN);
 }
+
+static bool
+sendsig_ctx_end(struct thread *td, vm_offset_t *addrp)
+{
+	struct arm64_reg_context end_ctx;
+	vm_offset_t ctx_addr;
+
+	*addrp -= sizeof(end_ctx);
+	ctx_addr = *addrp;
+
+	memset(&end_ctx, 0, sizeof(end_ctx));
+	end_ctx.ctx_id = ARM64_CTX_END;
+	end_ctx.ctx_size = sizeof(end_ctx);
+
+	if (copyout(&end_ctx, (void *)ctx_addr, sizeof(end_ctx)) != 0)
+		return (false);
+
+	return (true);
+}
+
+static bool
+sendsig_ctx_sve(struct thread *td, vm_offset_t *addrp)
+{
+	struct sve_context ctx;
+	struct pcb *pcb;
+	size_t buf_size;
+	vm_offset_t ctx_addr;
+
+	pcb = td->td_pcb;
+	/* Do nothing if sve hasn't started */
+	if (pcb->pcb_svesaved == NULL)
+		return (true);
+
+	MPASS(pcb->pcb_svesaved != NULL);
+
+	buf_size = sve_buf_size(td);
+
+	/* Address for the full context */
+	*addrp -= sizeof(ctx) + buf_size;
+	ctx_addr = *addrp;
+
+	memset(&ctx, 0, sizeof(ctx));
+	ctx.sve_ctx.ctx_id = ARM64_CTX_SVE;
+	ctx.sve_ctx.ctx_size = sizeof(ctx) + buf_size;
+	ctx.sve_vector_len = pcb->pcb_sve_len;
+	ctx.sve_flags = 0;
+
+	/* Copy out the header and data */
+	if (copyout(&ctx, (void *)ctx_addr, sizeof(ctx)) != 0)
+		return (false);
+	if (copyout(pcb->pcb_svesaved, (void *)(ctx_addr + sizeof(ctx)),
+	    buf_size) != 0)
+		return (false);
+
+	return (true);
+}
+
+typedef bool(*ctx_func)(struct thread *, vm_offset_t *);
+static const ctx_func ctx_funcs[] = {
+	sendsig_ctx_end,	/* Must be first to end the linked list */
+	sendsig_ctx_sve,
+	NULL,
+};
 
 void
 sendsig(sig_t catcher, ksiginfo_t *ksi, sigset_t *mask)
@@ -594,6 +736,7 @@ sendsig(sig_t catcher, ksiginfo_t *ksi, sigset_t *mask)
 	struct trapframe *tf;
 	struct sigframe *fp, frame;
 	struct sigacts *psp;
+	vm_offset_t addr;
 	int onstack, sig;
 
 	td = curthread;
@@ -613,18 +756,14 @@ sendsig(sig_t catcher, ksiginfo_t *ksi, sigset_t *mask)
 	/* Allocate and validate space for the signal handler context. */
 	if ((td->td_pflags & TDP_ALTSTACK) != 0 && !onstack &&
 	    SIGISMEMBER(psp->ps_sigonstack, sig)) {
-		fp = (struct sigframe *)((uintptr_t)td->td_sigstk.ss_sp +
+		addr = ((uintptr_t)td->td_sigstk.ss_sp +
 		    td->td_sigstk.ss_size);
 #if defined(COMPAT_43)
 		td->td_sigstk.ss_flags |= SS_ONSTACK;
 #endif
 	} else {
-		fp = (struct sigframe *)td->td_frame->tf_sp;
+		addr = td->td_frame->tf_sp;
 	}
-
-	/* Make room, keeping the stack aligned */
-	fp--;
-	fp = (struct sigframe *)STACKALIGN(fp);
 
 	/* Fill in the frame to copy out */
 	bzero(&frame, sizeof(frame));
@@ -636,6 +775,26 @@ sendsig(sig_t catcher, ksiginfo_t *ksi, sigset_t *mask)
 	    (onstack ? SS_ONSTACK : 0) : SS_DISABLE;
 	mtx_unlock(&psp->ps_mtx);
 	PROC_UNLOCK(td->td_proc);
+
+	for (int i = 0; ctx_funcs[i] != NULL; i++) {
+		if (!ctx_funcs[i](td, &addr)) {
+			/* Process has trashed its stack. Kill it. */
+			CTR4(KTR_SIG,
+			    "sendsig: frame sigexit td=%p fp=%#lx func[%d]=%p",
+			    td, addr, i, ctx_funcs[i]);
+			PROC_LOCK(p);
+			sigexit(td, SIGILL);
+			/* NOTREACHED */
+		}
+	}
+
+	/* Point at the first context */
+	frame.sf_uc.uc_mcontext.mc_ptr = addr;
+
+	/* Make room, keeping the stack aligned */
+	fp = (struct sigframe *)addr;
+	fp--;
+	fp = (struct sigframe *)STACKALIGN(fp);
 
 	/* Copy the sigframe out to the user's stack. */
 	if (copyout(&frame, fp, sizeof(*fp)) != 0) {

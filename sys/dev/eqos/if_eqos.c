@@ -1558,6 +1558,9 @@ eqos_attach(device_t dev)
 	if ((error = IF_EQOS_INIT(dev)))
 		return (error);
 
+	if ((error = IF_EQOS_INIT(dev)))
+		return (error);
+
 	sc->dev = dev;
 
  	sc->phy_attached = 0;
@@ -1570,7 +1573,7 @@ eqos_attach(device_t dev)
 	snpsver = ver & GMAC_MAC_VERSION_SNPSVER_MASK;
 
 	if (snpsver != 0x51) {
-		device_printf(dev, "EQOS version 0x%02xx not supported\n",
+		device_printf(dev, "EQOS version 0x%02x not supported\n",
 		    snpsver);
 /*		return (ENXIO);*/
 	}
@@ -1585,8 +1588,6 @@ eqos_attach(device_t dev)
 		    sc->hw_feature[0], sc->hw_feature[1],
 		    sc->hw_feature[2], sc->hw_feature[3]);
 	}
-
-
 
 	mtx_init(&sc->lock, "eqos lock", MTX_NETWORK_LOCK, MTX_DEF);
 	callout_init_mtx(&sc->callout, &sc->lock, 0);

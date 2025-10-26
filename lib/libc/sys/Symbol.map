@@ -425,7 +425,9 @@ FBSD_1.7 {
 };
 
 FBSD_1.8 {
-	 kcmp;
+	getrlimitusage;
+	kcmp;
+	setcred;
 };
 
 FBSDprivate_1.0 {

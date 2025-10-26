@@ -55,7 +55,6 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
 #include "opt_sysvipc.h"
 
 #include <sys/param.h>
@@ -1475,6 +1474,40 @@ sysctl_msqids(SYSCTL_HANDLER_ARGS)
 			break;
 	}
 	return (error);
+}
+
+int
+kern_get_msqids(struct thread *td, struct msqid_kernel **res, size_t *sz)
+{
+	struct msqid_kernel *pmsqk;
+	struct prison *pr, *rpr;
+	int i, mi;
+
+	*sz = mi = msginfo.msgmni;
+	if (res == NULL)
+		return (0);
+
+	pr = td->td_ucred->cr_prison;
+	rpr = msg_find_prison(td->td_ucred);
+	*res = malloc(sizeof(struct msqid_kernel) * mi, M_TEMP, M_WAITOK);
+	for (i = 0; i < mi; i++) {
+		pmsqk = &(*res)[i];
+		mtx_lock(&msq_mtx);
+		if (msqids[i].u.msg_qbytes == 0 || rpr == NULL ||
+		    msq_prison_cansee(rpr, &msqids[i]) != 0)
+			bzero(pmsqk, sizeof(*pmsqk));
+		else {
+			*pmsqk = msqids[i];
+			if (pmsqk->cred->cr_prison != pr)
+				pmsqk->u.msg_perm.key = IPC_PRIVATE;
+		}
+		mtx_unlock(&msq_mtx);
+		pmsqk->u.__msg_first = NULL;
+		pmsqk->u.__msg_last = NULL;
+		pmsqk->label = NULL;
+		pmsqk->cred = NULL;
+	}
+	return (0);
 }
 
 SYSCTL_INT(_kern_ipc, OID_AUTO, msgmax, CTLFLAG_RD, &msginfo.msgmax, 0,

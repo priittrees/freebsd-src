@@ -936,8 +936,8 @@ mb_unmapped_free_mext(struct mbuf *m)
 	mb_free_extpg(old_m);
 }
 
-static struct mbuf *
-_mb_unmapped_to_ext(struct mbuf *m)
+static int
+_mb_unmapped_to_ext(struct mbuf *m, struct mbuf **mres)
 {
 	struct mbuf *m_new, *top, *prev, *mref;
 	struct sf_buf *sf;
@@ -947,9 +947,15 @@ _mb_unmapped_to_ext(struct mbuf *m)
 	u_int ref_inc = 0;
 
 	M_ASSERTEXTPG(m);
+
+	if (m->m_epg_tls != NULL) {
+		/* can't convert TLS mbuf */
+		m_free(m);
+		*mres = NULL;
+		return (EINVAL);
+	}
+
 	len = m->m_len;
-	KASSERT(m->m_epg_tls == NULL, ("%s: can't convert TLS mbuf %p",
-	    __func__, m));
 
 	/* See if this is the mbuf that holds the embedded refcount. */
 	if (m->m_ext.ext_flags & EXT_FLAG_EMBREF) {
@@ -1047,7 +1053,8 @@ _mb_unmapped_to_ext(struct mbuf *m)
 			atomic_add_int(refcnt, ref_inc);
 	}
 	m_free(m);
-	return (top);
+	*mres = top;
+	return (0);
 
 fail:
 	if (ref_inc != 0) {
@@ -1064,13 +1071,15 @@ fail:
 	}
 	m_free(m);
 	m_freem(top);
-	return (NULL);
+	*mres = NULL;
+	return (ENOMEM);
 }
 
-struct mbuf *
-mb_unmapped_to_ext(struct mbuf *top)
+int
+mb_unmapped_to_ext(struct mbuf *top, struct mbuf **mres)
 {
-	struct mbuf *m, *next, *prev = NULL;
+	struct mbuf *m, *m1, *next, *prev = NULL;
+	int error;
 
 	prev = NULL;
 	for (m = top; m != NULL; m = next) {
@@ -1086,12 +1095,15 @@ mb_unmapped_to_ext(struct mbuf *top)
 				 */
 				prev->m_next = NULL;
 			}
-			m = _mb_unmapped_to_ext(m);
-			if (m == NULL) {
-				m_freem(top);
+			error = _mb_unmapped_to_ext(m, &m1);
+			if (error != 0) {
+				if (top != m)
+					m_freem(top);
 				m_freem(next);
-				return (NULL);
+				*mres = NULL;
+				return (error);
 			}
+			m = m1;
 			if (prev == NULL) {
 				top = m;
 			} else {
@@ -1110,7 +1122,8 @@ mb_unmapped_to_ext(struct mbuf *top)
 			prev = m;
 		}
 	}
-	return (top);
+	*mres = top;
+	return (0);
 }
 
 /*
@@ -1567,6 +1580,25 @@ m_freem(struct mbuf *mb)
 	MBUF_PROBE1(m__freem, mb);
 	while (mb != NULL)
 		mb = m_free(mb);
+}
+
+/*
+ * Free an entire chain of mbufs and associated external buffers, following
+ * both m_next and m_nextpkt linkage.
+ * Note: doesn't support NULL argument.
+ */
+void
+m_freemp(struct mbuf *m)
+{
+	struct mbuf *n;
+
+	MBUF_PROBE1(m__freemp, m);
+	do {
+		n = m->m_nextpkt;
+		while (m != NULL)
+			m = m_free(m);
+		m = n;
+	} while (m != NULL);
 }
 
 /*

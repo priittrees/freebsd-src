@@ -1895,6 +1895,7 @@ swap_pager_swapoff_object(struct swdevt *sp, vm_object_t object)
 				    __func__, rv);
 			VM_OBJECT_WLOCK(object);
 			vm_object_pip_wakeupn(object, 1);
+			vm_page_deactivate_noreuse(m);
 			vm_page_xunbusy(m);
 
 			/*
@@ -3161,6 +3162,10 @@ swap_pager_release_writecount(vm_object_t object, vm_offset_t start,
 	VM_OBJECT_WLOCK(object);
 	KASSERT((object->flags & OBJ_ANON) == 0,
 	    ("Splittable object with writecount"));
+	KASSERT(object->un_pager.swp.writemappings >= (vm_ooffset_t)end - start,
+	    ("swap obj %p writecount %jx dec %jx", object,
+	    (uintmax_t)object->un_pager.swp.writemappings,
+	    (uintmax_t)((vm_ooffset_t)end - start)));
 	object->un_pager.swp.writemappings -= (vm_ooffset_t)end - start;
 	VM_OBJECT_WUNLOCK(object);
 }

@@ -123,11 +123,20 @@ efi_status_to_errno(efi_status status)
 }
 
 static struct mtx efi_lock;
-static SYSCTL_NODE(_hw, OID_AUTO, efi, CTLFLAG_RWTUN | CTLFLAG_MPSAFE, NULL,
+SYSCTL_NODE(_hw, OID_AUTO, efi, CTLFLAG_RWTUN | CTLFLAG_MPSAFE, NULL,
     "EFI");
 static bool efi_poweroff = true;
 SYSCTL_BOOL(_hw_efi, OID_AUTO, poweroff, CTLFLAG_RWTUN, &efi_poweroff, 0,
     "If true, use EFI runtime services to power off in preference to ACPI");
+extern int print_efirt_faults;
+SYSCTL_INT(_hw_efi, OID_AUTO, print_faults, CTLFLAG_RWTUN,
+    &print_efirt_faults, 0,
+    "Print fault  information upon trap from EFIRT calls: "
+    "0 - never, 1 - once, 2 - always");
+extern u_long cnt_efirt_faults;
+SYSCTL_ULONG(_hw_efi, OID_AUTO, total_faults, CTLFLAG_RD,
+    &cnt_efirt_faults, 0,
+    "Total number of faults that occurred during EFIRT calls");
 
 static bool
 efi_is_in_map(struct efi_md *map, int ndesc, int descsz, vm_offset_t addr)
@@ -309,6 +318,9 @@ efi_enter(void)
 		fpu_kern_leave(td, NULL);
 		mtx_unlock(&efi_lock);
 		PMAP_UNLOCK(curpmap);
+	} else {
+		MPASS((td->td_pflags2 & TDP2_EFIRT) == 0);
+		td->td_pflags2 |= TDP2_EFIRT;
 	}
 	return (error);
 }
@@ -319,10 +331,13 @@ efi_leave(void)
 	struct thread *td;
 	pmap_t curpmap;
 
+	td = curthread;
+	MPASS((td->td_pflags2 & TDP2_EFIRT) != 0);
+	td->td_pflags2 &= ~TDP2_EFIRT;
+
 	efi_arch_leave();
 
 	curpmap = &curproc->p_vmspace->vm_pmap;
-	td = curthread;
 	fpu_kern_leave(td, NULL);
 	mtx_unlock(&efi_lock);
 	PMAP_UNLOCK(curpmap);
@@ -484,31 +499,32 @@ efi_rt_arch_call_nofault(struct efirt_callinfo *ec)
 
 	switch (ec->ec_argcnt) {
 	case 0:
-		ec->ec_efi_status = ((register_t (*)(void))ec->ec_fptr)();
+		ec->ec_efi_status = ((register_t EFIABI_ATTR (*)(void))
+		    ec->ec_fptr)();
 		break;
 	case 1:
-		ec->ec_efi_status = ((register_t (*)(register_t))ec->ec_fptr)
-		    (ec->ec_arg1);
+		ec->ec_efi_status = ((register_t EFIABI_ATTR (*)(register_t))
+		    ec->ec_fptr)(ec->ec_arg1);
 		break;
 	case 2:
-		ec->ec_efi_status = ((register_t (*)(register_t, register_t))
-		    ec->ec_fptr)(ec->ec_arg1, ec->ec_arg2);
+		ec->ec_efi_status = ((register_t EFIABI_ATTR (*)(register_t,
+		    register_t))ec->ec_fptr)(ec->ec_arg1, ec->ec_arg2);
 		break;
 	case 3:
-		ec->ec_efi_status = ((register_t (*)(register_t, register_t,
-		    register_t))ec->ec_fptr)(ec->ec_arg1, ec->ec_arg2,
-		    ec->ec_arg3);
+		ec->ec_efi_status = ((register_t EFIABI_ATTR (*)(register_t,
+		    register_t, register_t))ec->ec_fptr)(ec->ec_arg1,
+		    ec->ec_arg2, ec->ec_arg3);
 		break;
 	case 4:
-		ec->ec_efi_status = ((register_t (*)(register_t, register_t,
-		    register_t, register_t))ec->ec_fptr)(ec->ec_arg1,
-		    ec->ec_arg2, ec->ec_arg3, ec->ec_arg4);
+		ec->ec_efi_status = ((register_t EFIABI_ATTR (*)(register_t,
+		    register_t, register_t, register_t))ec->ec_fptr)(
+		    ec->ec_arg1, ec->ec_arg2, ec->ec_arg3, ec->ec_arg4);
 		break;
 	case 5:
-		ec->ec_efi_status = ((register_t (*)(register_t, register_t,
-		    register_t, register_t, register_t))ec->ec_fptr)(
-		    ec->ec_arg1, ec->ec_arg2, ec->ec_arg3, ec->ec_arg4,
-		    ec->ec_arg5);
+		ec->ec_efi_status = ((register_t EFIABI_ATTR (*)(register_t,
+		    register_t, register_t, register_t, register_t))
+		    ec->ec_fptr)(ec->ec_arg1, ec->ec_arg2, ec->ec_arg3,
+		    ec->ec_arg4, ec->ec_arg5);
 		break;
 	default:
 		panic("efi_rt_arch_call: %d args", (int)ec->ec_argcnt);

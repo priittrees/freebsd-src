@@ -92,8 +92,14 @@ MODULE_DEPEND(alc, miibus, 1, 1, 1);
 
 /* Tunables. */
 static int msi_disable = 0;
-static int msix_disable = 0;
 TUNABLE_INT("hw.alc.msi_disable", &msi_disable);
+
+/*
+ * The default value of msix_disable is 2, which means to decide whether to
+ * enable MSI-X in alc_attach() depending on the card type.  The operator can
+ * set this to 0 or 1 to override the default.
+ */
+static int msix_disable = 2;
 TUNABLE_INT("hw.alc.msix_disable", &msix_disable);
 
 /*
@@ -1411,6 +1417,14 @@ alc_attach(device_t dev)
 	case DEVICEID_ATHEROS_E2400:
 	case DEVICEID_ATHEROS_E2500:
 		sc->alc_flags |= ALC_FLAG_E2X00;
+
+		/*
+		 * Disable MSI-X by default on Killer devices, since this is
+		 * reported by several users to not work well.
+		 */
+		if (msix_disable == 2)
+			msix_disable = 1;
+
 		/* FALLTHROUGH */
 	case DEVICEID_ATHEROS_AR8161:
 		if (pci_get_subvendor(dev) == VENDORID_ATHEROS &&
@@ -1440,6 +1454,14 @@ alc_attach(device_t dev)
 	default:
 		break;
 	}
+
+	/*
+	 * The default value of msix_disable is 2, which means auto-detect.  If
+	 * we didn't auto-detect it, default to enabling it.
+	 */
+	if (msix_disable == 2)
+		msix_disable = 0;
+
 	sc->alc_flags |= ALC_FLAG_JUMBO;
 
 	/*
@@ -1563,12 +1585,6 @@ alc_attach(device_t dev)
 	alc_get_macaddr(sc);
 
 	ifp = sc->alc_ifp = if_alloc(IFT_ETHER);
-	if (ifp == NULL) {
-		device_printf(dev, "cannot allocate ifnet structure.\n");
-		error = ENXIO;
-		goto fail;
-	}
-
 	if_setsoftc(ifp, sc);
 	if_initname(ifp, device_get_name(dev), device_get_unit(dev));
 	if_setflags(ifp, IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST);
@@ -1579,10 +1595,9 @@ alc_attach(device_t dev)
 	if_setsendqready(ifp);
 	if_setcapabilities(ifp, IFCAP_TXCSUM | IFCAP_TSO4);
 	if_sethwassist(ifp, ALC_CSUM_FEATURES | CSUM_TSO);
-	if (pci_find_cap(dev, PCIY_PMG, &base) == 0) {
+	if (pci_has_pm(dev)) {
 		if_setcapabilitiesbit(ifp, IFCAP_WOL_MAGIC | IFCAP_WOL_MCAST, 0);
 		sc->alc_flags |= ALC_FLAG_PM;
-		sc->alc_pmcap = base;
 	}
 	if_setcapenable(ifp, if_getcapabilities(ifp));
 
@@ -1624,12 +1639,6 @@ alc_attach(device_t dev)
 	/* Create local taskq. */
 	sc->alc_tq = taskqueue_create_fast("alc_taskq", M_WAITOK,
 	    taskqueue_thread_enqueue, &sc->alc_tq);
-	if (sc->alc_tq == NULL) {
-		device_printf(dev, "could not create taskqueue.\n");
-		ether_ifdetach(ifp);
-		error = ENXIO;
-		goto fail;
-	}
 	taskqueue_start_threads(&sc->alc_tq, 1, PI_NET, "%s taskq",
 	    device_get_nameunit(sc->alc_dev));
 
@@ -2525,7 +2534,6 @@ alc_setwol_813x(struct alc_softc *sc)
 {
 	if_t ifp;
 	uint32_t reg, pmcs;
-	uint16_t pmstat;
 
 	ALC_LOCK_ASSERT(sc);
 
@@ -2574,13 +2582,8 @@ alc_setwol_813x(struct alc_softc *sc)
 		    CSR_READ_4(sc, ALC_MASTER_CFG) | MASTER_CLK_SEL_DIS);
 	}
 	/* Request PME. */
-	pmstat = pci_read_config(sc->alc_dev,
-	    sc->alc_pmcap + PCIR_POWER_STATUS, 2);
-	pmstat &= ~(PCIM_PSTAT_PME | PCIM_PSTAT_PMEENABLE);
 	if ((if_getcapenable(ifp) & IFCAP_WOL) != 0)
-		pmstat |= PCIM_PSTAT_PME | PCIM_PSTAT_PMEENABLE;
-	pci_write_config(sc->alc_dev,
-	    sc->alc_pmcap + PCIR_POWER_STATUS, pmstat, 2);
+		pci_enable_pme(sc->alc_dev);
 }
 
 static void
@@ -2588,7 +2591,6 @@ alc_setwol_816x(struct alc_softc *sc)
 {
 	if_t ifp;
 	uint32_t gphy, mac, master, pmcs, reg;
-	uint16_t pmstat;
 
 	ALC_LOCK_ASSERT(sc);
 
@@ -2639,13 +2641,8 @@ alc_setwol_816x(struct alc_softc *sc)
 
 	if ((sc->alc_flags & ALC_FLAG_PM) != 0) {
 		/* Request PME. */
-		pmstat = pci_read_config(sc->alc_dev,
-		    sc->alc_pmcap + PCIR_POWER_STATUS, 2);
-		pmstat &= ~(PCIM_PSTAT_PME | PCIM_PSTAT_PMEENABLE);
 		if ((if_getcapenable(ifp) & IFCAP_WOL) != 0)
-			pmstat |= PCIM_PSTAT_PME | PCIM_PSTAT_PMEENABLE;
-		pci_write_config(sc->alc_dev,
-		    sc->alc_pmcap + PCIR_POWER_STATUS, pmstat, 2);
+			pci_enable_pme(sc->alc_dev);
 	}
 }
 
@@ -2669,22 +2666,11 @@ alc_resume(device_t dev)
 {
 	struct alc_softc *sc;
 	if_t ifp;
-	uint16_t pmstat;
 
 	sc = device_get_softc(dev);
 
-	ALC_LOCK(sc);
-	if ((sc->alc_flags & ALC_FLAG_PM) != 0) {
-		/* Disable PME and clear PME status. */
-		pmstat = pci_read_config(sc->alc_dev,
-		    sc->alc_pmcap + PCIR_POWER_STATUS, 2);
-		if ((pmstat & PCIM_PSTAT_PMEENABLE) != 0) {
-			pmstat &= ~PCIM_PSTAT_PMEENABLE;
-			pci_write_config(sc->alc_dev,
-			    sc->alc_pmcap + PCIR_POWER_STATUS, pmstat, 2);
-		}
-	}
 	/* Reset PHY. */
+	ALC_LOCK(sc);
 	alc_phy_reset(sc);
 	ifp = sc->alc_ifp;
 	if ((if_getflags(ifp) & IFF_UP) != 0) {

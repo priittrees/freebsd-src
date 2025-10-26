@@ -29,6 +29,8 @@
 #ifndef _SYS_LINKER_H_
 #define _SYS_LINKER_H_
 
+#include <sys/param.h>
+
 #ifdef _KERNEL
 
 #include <machine/elf.h>
@@ -129,6 +131,12 @@ typedef int linker_predicate_t(linker_file_t, void *);
  * The "file" for the kernel.
  */
 extern linker_file_t	linker_kernel_file;
+
+/*
+ * Special symbol which will be replaced by a reference to the linker_file_t
+ * of the module it is used in.
+ */
+extern linker_file_t __this_linker_file;
 
 /*
  * Obtain a reference to a module, loading it if required.
@@ -242,6 +250,7 @@ void linker_kldload_unbusy(int flags);
 #define MODINFOMD_FW_HANDLE	0x000c		/* Firmware dependent handle */
 #define MODINFOMD_KEYBUF	0x000d		/* Crypto key intake buffer */
 #define MODINFOMD_FONT		0x000e		/* Console font */
+#define MODINFOMD_SPLASH	0x000f		/* Console splash screen */
 #define MODINFOMD_NOCOPY	0x8000		/* don't copy this metadata to the kernel */
 
 #define MODINFOMD_DEPLIST	(0x4001 | MODINFOMD_NOCOPY)	/* depends on */

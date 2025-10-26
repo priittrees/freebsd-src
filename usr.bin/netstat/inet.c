@@ -344,7 +344,7 @@ protopr(u_long off, const char *name, int af1, int proto)
 					xo_emit(" {T:/%-11.11s}", "(state)");
 			}
 			if (xflag) {
-				xo_emit("{T:/%-6.6s} {T:/%-6.6s} "
+				xo_emit(" {T:/%-6.6s} {T:/%-6.6s} "
 				    "{T:/%-6.6s} {T:/%-6.6s} {T:/%-6.6s} "
 				    "{T:/%-6.6s} {T:/%-6.6s} {T:/%-6.6s}",
 				    "R-HIWA", "S-HIWA", "R-LOWA", "S-LOWA",
@@ -649,8 +649,12 @@ tcp_stats(u_long off, const char *name, int af1 __unused, int proto __unused)
 	    "{N:/UDP tunneled pkt%s}\n");
 	p(tcps_tunneled_errs, "\t\t{:received-bad-udp-tunneled-pkts/%ju} "
 	    "{N:/UDP tunneled pkt cnt with error%s}\n");
-	p(tcps_rcvacktoomuch, "\t\t{:received-acks-for-unsent-data/%ju} "
-	    "{N:/ack%s for unsent data}\n");
+	p(tcps_rcvacktoomuch, "\t\t{:received-acks-for-data-not-yet-sent/%ju} "
+	    "{N:/ack%s for data not yet sent}\n");
+	p(tcps_rcvghostack, "\t\t{:received-acks-for-data-never-been-sent/%ju} "
+	    "{N:/ack%s for data never been sent (ghost acks)}\n");
+	p(tcps_rcvacktooold, "\t\t{:received-acks-for-data-being-too-old/%ju} "
+	    "{N:/ack%s for data being too old}\n");
 	p2(tcps_rcvpack, tcps_rcvbyte, "\t\t"
 	    "{:received-in-sequence-packets/%ju} {N:/packet%s} "
 	    "({:received-in-sequence-bytes/%ju} {N:/byte%s}) "

@@ -508,11 +508,6 @@ vlan_growhash(struct ifvlantrunk *trunk, int howmuch)
 		return;
 
 	hash2 = malloc(sizeof(struct ifvlanhead) * n2, M_VLAN, M_WAITOK);
-	if (hash2 == NULL) {
-		printf("%s: out of memory -- hash size not changed\n",
-		    __func__);
-		return;		/* We can live with the old hash table */
-	}
 	for (j = 0; j < n2; j++)
 		CK_SLIST_INIT(&hash2[j]);
 	for (i = 0; i < n; i++)
@@ -1163,14 +1158,6 @@ vlan_clone_create(struct if_clone *ifc, char *name, size_t len,
 
 	ifv = malloc(sizeof(struct ifvlan), M_VLAN, M_WAITOK | M_ZERO);
 	ifp = ifv->ifv_ifp = if_alloc(IFT_ETHER);
-	if (ifp == NULL) {
-		if (!subinterface)
-			ifc_free_unit(ifc, unit);
-		free(ifv, M_VLAN);
-		if (p != NULL)
-			if_rele(p);
-		return (ENOSPC);
-	}
 	CK_SLIST_INIT(&ifv->vlan_mc_listhead);
 	ifp->if_softc = ifv;
 	/*
@@ -1715,10 +1702,20 @@ vlan_config(struct ifvlan *ifv, struct ifnet *p, uint16_t vid,
 		ifv->ifv_proto = proto;
 
 		if (ifv->ifv_vid != vid) {
+			int oldvid = ifv->ifv_vid;
+
 			/* Re-hash */
 			vlan_remhash(trunk, ifv);
 			ifv->ifv_vid = vid;
 			error = vlan_inshash(trunk, ifv);
+			if (error) {
+				int ret __diagused;
+
+				ifv->ifv_vid = oldvid;
+				/* Re-insert back where we found it. */
+				ret = vlan_inshash(trunk, ifv);
+				MPASS(ret == 0);
+			}
 		}
 		/* Will unlock */
 		goto done;

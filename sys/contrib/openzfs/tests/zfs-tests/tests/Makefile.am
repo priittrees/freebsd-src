@@ -80,7 +80,8 @@ if BUILD_LINUX
 nobase_dist_datadir_zfs_tests_tests_SCRIPTS += \
 	functional/simd/simd_supported.ksh \
 	functional/tmpfile/cleanup.ksh \
-	functional/tmpfile/setup.ksh
+	functional/tmpfile/setup.ksh \
+	functional/luks/luks_sanity.ksh
 endif
 
 nobase_dist_datadir_zfs_tests_tests_DATA += \
@@ -478,6 +479,7 @@ nobase_dist_datadir_zfs_tests_tests_SCRIPTS += \
 	functional/block_cloning/block_cloning_replay.ksh \
 	functional/block_cloning/block_cloning_replay_encrypted.ksh \
 	functional/block_cloning/block_cloning_lwb_buffer_overflow.ksh \
+	functional/block_cloning/block_cloning_rlimit_fsize.ksh \
 	functional/bootfs/bootfs_001_pos.ksh \
 	functional/bootfs/bootfs_002_neg.ksh \
 	functional/bootfs/bootfs_003_pos.ksh \
@@ -1476,6 +1478,7 @@ nobase_dist_datadir_zfs_tests_tests_SCRIPTS += \
 	functional/fault/decompress_fault.ksh \
 	functional/fault/decrypt_fault.ksh \
 	functional/fault/scrub_after_resilver.ksh \
+	functional/fault/suspend_resume_single.ksh \
 	functional/fault/setup.ksh \
 	functional/fault/zpool_status_-s.ksh \
 	functional/features/async_destroy/async_destroy_001_pos.ksh \

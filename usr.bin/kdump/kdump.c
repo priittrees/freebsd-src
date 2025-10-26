@@ -117,6 +117,7 @@ void ktruser(int, void *);
 void ktrcaprights(cap_rights_t *);
 void ktritimerval(struct itimerval *it);
 void ktrsockaddr(struct sockaddr *);
+void ktrsplice(struct splice *);
 void ktrstat(struct stat *);
 void ktrstruct(char *, size_t);
 void ktrcapfail(struct ktr_cap_fail *);
@@ -1936,6 +1937,14 @@ ktrsockaddr(struct sockaddr *sa)
 }
 
 void
+ktrsplice(struct splice *sp)
+{
+	printf("struct splice { fd=%d, max=%#jx, idle=%jd.%06jd }\n",
+	    sp->sp_fd, (uintmax_t)sp->sp_max, (intmax_t)sp->sp_idle.tv_sec,
+	    (intmax_t)sp->sp_idle.tv_usec);
+}
+
+void
 ktrstat(struct stat *statp)
 {
 	char mode[12], timestr[PATH_MAX + 4];
@@ -2123,6 +2132,13 @@ ktrstruct(char *buf, size_t buflen)
 		memcpy(set, data, datalen);
 		ktrbitset(name, set, datalen);
 		free(set);
+	} else if (strcmp(name, "splice") == 0) {
+		struct splice sp;
+
+		if (datalen != sizeof(sp))
+			goto invalid;
+		memcpy(&sp, data, datalen);
+		ktrsplice(&sp);
 	} else {
 #ifdef SYSDECODE_HAVE_LINUX
 		if (ktrstruct_linux(name, data, datalen) == false)
@@ -2137,35 +2153,74 @@ invalid:
 void
 ktrcapfail(struct ktr_cap_fail *ktr)
 {
+	union ktr_cap_data *kcd = &ktr->cap_data;
+
 	switch (ktr->cap_type) {
 	case CAPFAIL_NOTCAPABLE:
 		/* operation on fd with insufficient capabilities */
 		printf("operation requires ");
-		sysdecode_cap_rights(stdout, &ktr->cap_needed);
+		sysdecode_cap_rights(stdout, &kcd->cap_needed);
 		printf(", descriptor holds ");
-		sysdecode_cap_rights(stdout, &ktr->cap_held);
+		sysdecode_cap_rights(stdout, &kcd->cap_held);
 		break;
 	case CAPFAIL_INCREASE:
 		/* requested more capabilities than fd already has */
 		printf("attempt to increase capabilities from ");
-		sysdecode_cap_rights(stdout, &ktr->cap_held);
+		sysdecode_cap_rights(stdout, &kcd->cap_held);
 		printf(" to ");
-		sysdecode_cap_rights(stdout, &ktr->cap_needed);
+		sysdecode_cap_rights(stdout, &kcd->cap_needed);
 		break;
 	case CAPFAIL_SYSCALL:
 		/* called restricted syscall */
-		printf("disallowed system call");
+		printf("system call not allowed: ");
+		syscallname(ktr->cap_code, ktr->cap_svflags);
+		if (syscallabi(ktr->cap_svflags) == SYSDECODE_ABI_FREEBSD) {
+			switch (ktr->cap_code) {
+			case SYS_sysarch:
+				printf(", op: ");
+				print_integer_arg(sysdecode_sysarch_number,
+				    kcd->cap_int);
+				break;
+			case SYS_fcntl:
+				printf(", cmd: ");
+				print_integer_arg(sysdecode_fcntl_cmd,
+				    kcd->cap_int);
+				break;
+			}
+		}
 		break;
-	case CAPFAIL_LOOKUP:
+	case CAPFAIL_SIGNAL:
+		/* sent signal to proc other than self */
+		syscallname(ktr->cap_code, ktr->cap_svflags);
+		printf(": signal delivery not allowed: ");
+		print_integer_arg(sysdecode_signal, kcd->cap_int);
+		break;
+	case CAPFAIL_PROTO:
+		/* created socket with restricted protocol */
+		syscallname(ktr->cap_code, ktr->cap_svflags);
+		printf(": protocol not allowed: ");
+		print_integer_arg(sysdecode_ipproto, kcd->cap_int);
+		break;
+	case CAPFAIL_SOCKADDR:
+		/* unable to look up address */
+		syscallname(ktr->cap_code, ktr->cap_svflags);
+		printf(": restricted address lookup: ");
+		ktrsockaddr(&kcd->cap_sockaddr);
+		return;
+	case CAPFAIL_NAMEI:
 		/* absolute or AT_FDCWD path, ".." path, etc. */
-		printf("restricted VFS lookup");
-		break;
+		syscallname(ktr->cap_code, ktr->cap_svflags);
+		printf(": restricted VFS lookup: %s\n", kcd->cap_path);
+		return;
+	case CAPFAIL_CPUSET:
+		/* modification of an external cpuset */
+		syscallname(ktr->cap_code, ktr->cap_svflags);
+		printf(": restricted cpuset operation\n");
+		return;
 	default:
-		printf("unknown capability failure: ");
-		sysdecode_cap_rights(stdout, &ktr->cap_needed);
-		printf(" ");
-		sysdecode_cap_rights(stdout, &ktr->cap_held);
-		break;
+		syscallname(ktr->cap_code, ktr->cap_svflags);
+		printf(": unknown capability failure\n");
+		return;
 	}
 	printf("\n");
 }

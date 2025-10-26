@@ -33,6 +33,12 @@
 # it is better to terminate it.
 ulimit -t 20
 
+# Do not ignore the exit codes of roff tools, as they may indicate a
+# problem with the page being rendered.  Note that this also causes a
+# nonzero exit when the user quits reading before reaching the end, so
+# we need to look out for and deal with that specific case.
+set -o pipefail
+
 # Usage: add_to_manpath path
 # Adds a variable to manpath while ensuring we don't have duplicates.
 # Returns true if we were able to add something. False otherwise.
@@ -195,6 +201,10 @@ decho() {
 # Returns true if glob resolves to a real file and store the first
 # found filename in the variable $found
 exists() {
+	if [ -z "$1" ]; then
+		return 1
+	fi
+
 	local IFS
 
 	# Don't accidentally inherit callers IFS (breaks perl manpages)
@@ -312,7 +322,7 @@ man_check_for_so() {
 	# We need to loop to accommodate multiple .so directives.
 	while true
 	do
-		line=$($cattool "$manpage" | head -1)
+		line=$($cattool "$manpage" 2>/dev/null | grep -E -m1 -v '^\.\\"[ ]*|^[ ]*$')
 		case "$line" in
 		.so*)	trim "${line#.so}"
 			decho "$manpage includes $tstr"
@@ -726,10 +736,9 @@ man_setup_locale() {
 # Display usage for the man utility.
 man_usage() {
 	echo 'Usage:'
-	echo ' man [-adho] [-t | -w] [-K regexp] [-M manpath] [-P pager] [-S mansect]'
+	echo ' man [-adho] [-t | -w] [-M manpath] [-P pager] [-S mansect]'
 	echo '     [-m arch[:machine]] [-p [eprtv]] [mansect] page [...]'
-	echo ' man -f page [...] -- Emulates whatis(1)'
-	echo ' man -k page [...] -- Emulates apropos(1)'
+	echo ' man -K | -f | -k expression [...] -- Search manual pages'
 
 	# When exit'ing with -h, it's not an error.
 	exit ${1:-1}
@@ -1048,6 +1057,16 @@ do_man() {
 		decho "Searching for \"$page\""
 		man_find_and_display "$page"
 	done
+
+	# The user will very commonly quit reading the page before
+	# reaching the bottom.  Depending on the length of the page
+	# and the pager's buffer size, this may result in a SIGPIPE.
+	# This is normal, so convert that exit code to zero.
+	if [ ${ret:-0} -gt 128 ]; then
+		if [ "$(kill -l "${ret}")" = "PIPE" ]; then
+			ret=0
+		fi
+	fi
 
 	exit ${ret:-0}
 }

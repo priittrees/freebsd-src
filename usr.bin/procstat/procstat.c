@@ -66,6 +66,7 @@ static void cmdopt_signals(int argc, char * const argv[]);
 static void cmdopt_rusage(int argc, char * const argv[]);
 static void cmdopt_files(int argc, char * const argv[]);
 static void cmdopt_cpuset(int argc, char * const argv[]);
+static void cmdopt_kqueue(int argc, char * const argv[]);
 
 static const char *progname;
 
@@ -104,6 +105,8 @@ static const struct procstat_cmd cmd_table[] = {
 	    PS_CMP_PLURAL },
 	{ "file", "files", "[-C]", &procstat_files, &cmdopt_files,
 	    PS_CMP_PLURAL },
+	{ "kqueue", "kqueues", NULL, &procstat_kqueues, &cmdopt_kqueue,
+	    PS_CMP_PLURAL },
 	{ "kstack", "kstack", "[-v]", &procstat_kstack, &cmdopt_verbose,
 	    PS_CMP_NORMAL },
 	{ "pargs", "args", NULL, &procstat_pargs, &cmdopt_none,
@@ -116,6 +119,8 @@ static const struct procstat_cmd cmd_table[] = {
 	    PS_CMP_NORMAL },
 	{ "rlimit", "rlimit", NULL, &procstat_rlimit, &cmdopt_none,
 	    PS_CMP_NORMAL },
+	{ "rlimitusage", "rlimitusage", NULL, &procstat_rlimitusage,
+	    &cmdopt_none, PS_CMP_NORMAL },
 	{ "rusage", "rusage", "[-Ht]", &procstat_rusage, &cmdopt_rusage,
 	    PS_CMP_NORMAL },
 	{ "sigfastblock", "sigfastblock", NULL, &procstat_sigfastblock,
@@ -629,4 +634,21 @@ cmdopt_cpuset(int argc, char * const argv[])
 
 	procstat_opts |= PS_OPT_PERTHREAD;
 	cmdopt_none(argc, argv);
+}
+
+void
+cmdopt_kqueue(int argc, char * const argv[])
+{
+	int ch;
+
+	while ((ch = getopt(argc, argv, "v")) != -1) {
+		switch (ch) {
+		case 'v':
+			procstat_opts |= PS_OPT_VERBOSE;
+			break;
+		case '?':
+		default:
+			usage(NULL);
+		}
+	}
 }

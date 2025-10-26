@@ -278,8 +278,7 @@ nvme_ctrlr_wait_for_ready(struct nvme_controller *ctrlr, int desired_val)
 		csts = nvme_mmio_read_4(ctrlr, csts);
 		if (csts == NVME_GONE)		/* Hot unplug. */
 			return (ENXIO);
-		if (((csts >> NVME_CSTS_REG_RDY_SHIFT) & NVME_CSTS_REG_RDY_MASK)
-		    == desired_val)
+		if (NVMEV(NVME_CSTS_REG_RDY, csts) == desired_val)
 			break;
 		if (timeout - ticks < 0) {
 			nvme_printf(ctrlr, "controller ready did not become %d "
@@ -305,8 +304,8 @@ nvme_ctrlr_disable(struct nvme_controller *ctrlr)
 	cc = nvme_mmio_read_4(ctrlr, cc);
 	csts = nvme_mmio_read_4(ctrlr, csts);
 
-	en = (cc >> NVME_CC_REG_EN_SHIFT) & NVME_CC_REG_EN_MASK;
-	rdy = (csts >> NVME_CSTS_REG_RDY_SHIFT) & NVME_CSTS_REG_RDY_MASK;
+	en = NVMEV(NVME_CC_REG_EN, cc);
+	rdy = NVMEV(NVME_CSTS_REG_RDY, csts);
 
 	/*
 	 * Per 3.1.5 in NVME 1.3 spec, transitioning CC.EN from 0 to 1
@@ -327,7 +326,7 @@ nvme_ctrlr_disable(struct nvme_controller *ctrlr)
 			return (err);
 	}
 
-	cc &= ~NVME_CC_REG_EN_MASK;
+	cc &= ~NVMEM(NVME_CC_REG_EN);
 	nvme_mmio_write_4(ctrlr, cc, cc);
 
 	/*
@@ -352,8 +351,8 @@ nvme_ctrlr_enable(struct nvme_controller *ctrlr)
 	cc = nvme_mmio_read_4(ctrlr, cc);
 	csts = nvme_mmio_read_4(ctrlr, csts);
 
-	en = (cc >> NVME_CC_REG_EN_SHIFT) & NVME_CC_REG_EN_MASK;
-	rdy = (csts >> NVME_CSTS_REG_RDY_SHIFT) & NVME_CSTS_REG_RDY_MASK;
+	en = NVMEV(NVME_CC_REG_EN, cc);
+	rdy = NVMEV(NVME_CSTS_REG_RDY, csts);
 
 	/*
 	 * See note in nvme_ctrlr_disable. Short circuit if we're already enabled.
@@ -376,25 +375,25 @@ nvme_ctrlr_enable(struct nvme_controller *ctrlr)
 	qsize = ctrlr->adminq.num_entries - 1;
 
 	aqa = 0;
-	aqa = (qsize & NVME_AQA_REG_ACQS_MASK) << NVME_AQA_REG_ACQS_SHIFT;
-	aqa |= (qsize & NVME_AQA_REG_ASQS_MASK) << NVME_AQA_REG_ASQS_SHIFT;
+	aqa |= NVMEF(NVME_AQA_REG_ACQS, qsize);
+	aqa |= NVMEF(NVME_AQA_REG_ASQS, qsize);
 	nvme_mmio_write_4(ctrlr, aqa, aqa);
 
 	/* Initialization values for CC */
 	cc = 0;
-	cc |= 1 << NVME_CC_REG_EN_SHIFT;
-	cc |= 0 << NVME_CC_REG_CSS_SHIFT;
-	cc |= 0 << NVME_CC_REG_AMS_SHIFT;
-	cc |= 0 << NVME_CC_REG_SHN_SHIFT;
-	cc |= 6 << NVME_CC_REG_IOSQES_SHIFT; /* SQ entry size == 64 == 2^6 */
-	cc |= 4 << NVME_CC_REG_IOCQES_SHIFT; /* CQ entry size == 16 == 2^4 */
+	cc |= NVMEF(NVME_CC_REG_EN, 1);
+	cc |= NVMEF(NVME_CC_REG_CSS, 0);
+	cc |= NVMEF(NVME_CC_REG_AMS, 0);
+	cc |= NVMEF(NVME_CC_REG_SHN, 0);
+	cc |= NVMEF(NVME_CC_REG_IOSQES, 6); /* SQ entry size == 64 == 2^6 */
+	cc |= NVMEF(NVME_CC_REG_IOCQES, 4); /* CQ entry size == 16 == 2^4 */
 
 	/*
 	 * Use the Memory Page Size selected during device initialization.  Note
 	 * that value stored in mps is suitable to use here without adjusting by
 	 * NVME_MPS_SHIFT.
 	 */
-	cc |= ctrlr->mps << NVME_CC_REG_MPS_SHIFT;
+	cc |= NVMEF(NVME_CC_REG_MPS, ctrlr->mps);
 
 	nvme_ctrlr_barrier(ctrlr, BUS_SPACE_BARRIER_WRITE);
 	nvme_mmio_write_4(ctrlr, cc, cc);
@@ -730,10 +729,6 @@ nvme_ctrlr_async_event_log_page_cb(void *arg, const struct nvme_completion *cpl)
 			nvme_sanitize_status_page_swapbytes(
 			    (struct nvme_sanitize_status_page *)aer->log_page_buffer);
 			break;
-		case INTEL_LOG_TEMP_STATS:
-			intel_log_temp_stats_swapbytes(
-			    (struct intel_log_temp_stats *)aer->log_page_buffer);
-			break;
 		default:
 			break;
 		}
@@ -795,10 +790,11 @@ nvme_ctrlr_async_event_cb(void *arg, const struct nvme_completion *cpl)
 	}
 
 	/* Associated log page is in bits 23:16 of completion entry dw0. */
-	aer->log_page_id = (cpl->cdw0 & 0xFF0000) >> 16;
+	aer->log_page_id = NVMEV(NVME_ASYNC_EVENT_LOG_PAGE_ID, cpl->cdw0);
 
 	nvme_printf(aer->ctrlr, "async event occurred (type 0x%x, info 0x%02x,"
-	    " page 0x%02x)\n", (cpl->cdw0 & 0x07), (cpl->cdw0 & 0xFF00) >> 8,
+	    " page 0x%02x)\n", NVMEV(NVME_ASYNC_EVENT_TYPE, cpl->cdw0),
+	    NVMEV(NVME_ASYNC_EVENT_INFO, cpl->cdw0),
 	    aer->log_page_id);
 
 	if (is_log_page_id_valid(aer->log_page_id)) {
@@ -1259,7 +1255,7 @@ nvme_pt_done(void *arg, const struct nvme_completion *cpl)
 	pt->cpl.cdw0 = cpl->cdw0;
 
 	status = cpl->status;
-	status &= ~NVME_STATUS_P_MASK;
+	status &= ~NVMEM(NVME_STATUS_P);
 	pt->cpl.status = status;
 
 	mtx_lock(mtx);
@@ -1517,7 +1513,8 @@ nvme_ctrlr_construct(struct nvme_controller *ctrlr, device_t dev)
 void
 nvme_ctrlr_destruct(struct nvme_controller *ctrlr, device_t dev)
 {
-	int	gone, i;
+	int	i;
+	bool	gone;
 
 	ctrlr->is_dying = true;
 
@@ -1527,10 +1524,16 @@ nvme_ctrlr_destruct(struct nvme_controller *ctrlr, device_t dev)
 		goto noadminq;
 
 	/*
-	 * Check whether it is a hot unplug or a clean driver detach.
-	 * If device is not there any more, skip any shutdown commands.
+	 * Check whether it is a hot unplug or a clean driver detach.  If device
+	 * is not there any more, skip any shutdown commands.  Some hotplug
+	 * bridges will return zeros instead of ff's when the device is
+	 * departing, so ask the bridge if the device is gone. Some systems can
+	 * remove the drive w/o the bridge knowing its gone (they don't really
+	 * do hotplug), so failsafe with detecting all ff's (impossible with
+	 * this hardware) as the device being gone.
 	 */
-	gone = (nvme_mmio_read_4(ctrlr, csts) == NVME_GONE);
+	gone = bus_child_present(dev) == 0 ||
+	    (nvme_mmio_read_4(ctrlr, csts) == NVME_GONE);
 	if (gone)
 		nvme_ctrlr_fail(ctrlr);
 	else
@@ -1558,17 +1561,17 @@ nvme_ctrlr_destruct(struct nvme_controller *ctrlr, device_t dev)
 	nvme_admin_qpair_destroy(&ctrlr->adminq);
 
 	/*
-	 *  Notify the controller of a shutdown, even though this is due to
-	 *   a driver unload, not a system shutdown (this path is not invoked
-	 *   during shutdown).  This ensures the controller receives a
-	 *   shutdown notification in case the system is shutdown before
-	 *   reloading the driver.
+	 * Notify the controller of a shutdown, even though this is due to a
+	 * driver unload, not a system shutdown (this path is not invoked uring
+	 * shutdown).  This ensures the controller receives a shutdown
+	 * notification in case the system is shutdown before reloading the
+	 * driver. Some NVMe drives need this to flush their cache to stable
+	 * media and consider it a safe shutdown in SMART stats.
 	 */
-	if (!gone)
+	if (!gone) {
 		nvme_ctrlr_shutdown(ctrlr);
-
-	if (!gone)
 		nvme_ctrlr_disable(ctrlr);
+	}
 
 noadminq:
 	if (ctrlr->taskqueue)
@@ -1601,8 +1604,8 @@ nvme_ctrlr_shutdown(struct nvme_controller *ctrlr)
 	int		timeout;
 
 	cc = nvme_mmio_read_4(ctrlr, cc);
-	cc &= ~(NVME_CC_REG_SHN_MASK << NVME_CC_REG_SHN_SHIFT);
-	cc |= NVME_SHN_NORMAL << NVME_CC_REG_SHN_SHIFT;
+	cc &= ~NVMEM(NVME_CC_REG_SHN);
+	cc |= NVMEF(NVME_CC_REG_SHN, NVME_SHN_NORMAL);
 	nvme_mmio_write_4(ctrlr, cc, cc);
 
 	timeout = ticks + (ctrlr->cdata.rtd3e == 0 ? 5 * hz :

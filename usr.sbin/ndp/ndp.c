@@ -125,7 +125,6 @@
 static pid_t pid;
 static int32_t thiszone;	/* time difference with gmt */
 static int s = -1;
-static int repeat = 0;
 
 static char host_buf[NI_MAXHOST];	/* getnameinfo() */
 static char ifix_buf[IFNAMSIZ];		/* if_indextoname() */
@@ -252,8 +251,8 @@ main(int argc, char **argv)
 				/*NOTREACHED*/
 			}
 			mode = 'a';
-			repeat = atoi(optarg);
-			if (repeat < 0) {
+			opts.repeat = atoi(optarg);
+			if (opts.repeat < 0) {
 				usage();
 				/*NOTREACHED*/
 			}
@@ -634,12 +633,12 @@ dump_rtsock(struct sockaddr_in6 *addr, int cflag)
 	if (!opts.tflag && !cflag) {
 		char xobuf[200];
 		snprintf(xobuf, sizeof(xobuf),
-		    "{T:/%%-%d.%ds} {T:/%%-%d.%ds} {T:/%%%d.%ds} {T:/%%-9.9s} {T:%%1s} {T:%%5s}\n",
+		    "{T:/%%-%d.%ds} {T:/%%-%d.%ds} {T:/%%%d.%ds} {T:/%%-9.9s} {T:/%%1s} {T:/%%5s}\n",
 		    W_ADDR, W_ADDR, W_LL, W_LL, W_IF, W_IF);
 		xo_emit(xobuf, "Neighbor", "Linklayer Address", "Netif", "Expire", "S", "Flags");
 	}
 	xo_open_list("neighbor-cache");
-again:;
+again:
 	mib[0] = CTL_NET;
 	mib[1] = PF_ROUTE;
 	mib[2] = 0;
@@ -823,10 +822,10 @@ again:;
 	if (buf != NULL)
 		free(buf);
 
-	if (repeat) {
+	if (opts.repeat) {
 		xo_emit("\n");
 		xo_flush();
-		sleep(repeat);
+		sleep(opts.repeat);
 		goto again;
 	}
 
@@ -1166,7 +1165,7 @@ rtrlist(void)
 	size_t l;
 	struct timeval now;
 
-	if (sysctl(mib, sizeof(mib) / sizeof(mib[0]), NULL, &l, NULL, 0) < 0) {
+	if (sysctl(mib, nitems(mib), NULL, &l, NULL, 0) < 0) {
 		xo_err(1, "sysctl(ICMPV6CTL_ND6_DRLIST)");
 		/*NOTREACHED*/
 	}
@@ -1177,7 +1176,7 @@ rtrlist(void)
 		xo_err(1, "malloc");
 		/*NOTREACHED*/
 	}
-	if (sysctl(mib, sizeof(mib) / sizeof(mib[0]), buf, &l, NULL, 0) < 0) {
+	if (sysctl(mib, nitems(mib), buf, &l, NULL, 0) < 0) {
 		xo_err(1, "sysctl(ICMPV6CTL_ND6_DRLIST)");
 		/*NOTREACHED*/
 	}
@@ -1252,7 +1251,7 @@ plist(void)
 	int ninflags = opts.nflag ? NI_NUMERICHOST : 0;
 	char namebuf[NI_MAXHOST];
 
-	if (sysctl(mib, sizeof(mib) / sizeof(mib[0]), NULL, &l, NULL, 0) < 0) {
+	if (sysctl(mib, nitems(mib), NULL, &l, NULL, 0) < 0) {
 		xo_err(1, "sysctl(ICMPV6CTL_ND6_PRLIST)");
 		/*NOTREACHED*/
 	}
@@ -1261,7 +1260,7 @@ plist(void)
 		xo_err(1, "malloc");
 		/*NOTREACHED*/
 	}
-	if (sysctl(mib, sizeof(mib) / sizeof(mib[0]), buf, &l, NULL, 0) < 0) {
+	if (sysctl(mib, nitems(mib), buf, &l, NULL, 0) < 0) {
 		xo_err(1, "sysctl(ICMPV6CTL_ND6_PRLIST)");
 		/*NOTREACHED*/
 	}
@@ -1329,7 +1328,7 @@ plist(void)
 		if (p->expire == 0)
 			xo_emit(", expire=Never{en:permanent/true}");
 		else if (p->expire >= now.tv_sec)
-			xo_emit(", expire=%s{e:expires_sec/%d}",
+			xo_emit(", expire={:expires/%s}{e:expires_sec/%d}",
 			    sec2str(expire_in), expire_in);
 		else
 			xo_emit(", expired{e:expires_sec/%d}", expire_in);

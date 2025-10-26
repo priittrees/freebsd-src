@@ -255,6 +255,7 @@ static const char ovpnname[] = "ovpn";
 static const char ovpngroupname[] = "openvpn";
 
 static MALLOC_DEFINE(M_OVPN, ovpnname, "OpenVPN DCO Interface");
+#define	MTAG_OVPN_LOOP		0x6f76706e /* ovpn */
 
 SYSCTL_DECL(_net_link);
 static SYSCTL_NODE(_net_link, IFT_OTHER, openvpn, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
@@ -592,6 +593,7 @@ ovpn_new_peer(struct ifnet *ifp, const nvlist_t *nvl)
 	free(name, M_SONAME);
 	name = NULL;
 
+#ifdef INET6
 	if (peer->local.ss_family == AF_INET6 &&
 	    IN6_IS_ADDR_V4MAPPED(&TO_IN6(&peer->remote)->sin6_addr)) {
 		/* V4 mapped address, so treat this as v4, not v6. */
@@ -599,7 +601,6 @@ ovpn_new_peer(struct ifnet *ifp, const nvlist_t *nvl)
 		in6_sin6_2_sin_in_sock((struct sockaddr *)&peer->remote);
 	}
 
-#ifdef INET6
 	if (peer->local.ss_family == AF_INET6 &&
 	    IN6_IS_ADDR_UNSPECIFIED(&TO_IN6(&peer->local)->sin6_addr)) {
 		NET_EPOCH_ENTER(et);
@@ -627,8 +628,20 @@ ovpn_new_peer(struct ifnet *ifp, const nvlist_t *nvl)
 	}
 
 	/* Must be the same socket as for other peers on this interface. */
-	if (sc->so != NULL && so != sc->so)
-		goto error_locked;
+	if (sc->so != NULL && so != sc->so) {
+		if (! RB_EMPTY(&sc->peers)) {
+			ret = EBUSY;
+			goto error_locked;
+		}
+
+		/*
+		 * If we have no peers we can safely release the socket and accept
+		 * a new one.
+		 */
+		ret = udp_set_kernel_tunneling(sc->so, NULL, NULL, NULL);
+		sorele(sc->so);
+		sc->so = NULL;
+	}
 
 	if (sc->so == NULL)
 		sc->so = so;
@@ -1858,6 +1871,14 @@ ovpn_transmit_to_peer(struct ifnet *ifp, struct mbuf *m,
 	if (af != 0)
 		BPF_MTAP2(ifp, &af, sizeof(af), m);
 
+	if (__predict_false(if_tunnel_check_nesting(ifp, m, MTAG_OVPN_LOOP, 3))) {
+		if (_ovpn_lock_trackerp != NULL)
+			OVPN_RUNLOCK(sc);
+		OVPN_COUNTER_ADD(sc, lost_data_pkts_out, 1);
+		m_freem(m);
+		return (ELOOP);
+	}
+
 	len = m->m_pkthdr.len;
 	MPASS(len <= ifp->if_mtu);
 
@@ -2110,6 +2131,12 @@ ovpn_output(struct ifnet *ifp, struct mbuf *m, const struct sockaddr *dst,
 
 	sc = ifp->if_softc;
 
+	m = m_unshare(m, M_NOWAIT);
+	if (m == NULL) {
+		OVPN_COUNTER_ADD(sc, lost_data_pkts_out, 1);
+		return (ENOBUFS);
+	}
+
 	OVPN_RLOCK(sc);
 
 	SDT_PROBE1(if_ovpn, tx, transmit, start, m);
@@ -2253,6 +2280,12 @@ ovpn_udp_input(struct mbuf *m, int off, struct inpcb *inp,
 		/* Control packet? */
 		OVPN_RUNLOCK(sc);
 		return (false);
+	}
+
+	m = m_unshare(m, M_NOWAIT);
+	if (m == NULL) {
+		OVPN_COUNTER_ADD(sc, nomem_data_pkts_in, 1);
+		return (true);
 	}
 
 	m = m_pullup(m, off + sizeof(*uhdr) + ohdrlen);
@@ -2577,3 +2610,4 @@ static moduledata_t ovpn_mod = {
 
 DECLARE_MODULE(if_ovpn, ovpn_mod, SI_SUB_PSEUDO, SI_ORDER_ANY);
 MODULE_VERSION(if_ovpn, 1);
+MODULE_DEPEND(if_ovpn, crypto, 1, 1, 1);

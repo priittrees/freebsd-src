@@ -2975,6 +2975,7 @@ dsl_dataset_rename_snapshot_sync_impl(dsl_pool_t *dp,
 	dsl_dataset_t *ds;
 	uint64_t val;
 	dmu_tx_t *tx = ddrsa->ddrsa_tx;
+	char *oldname, *newname;
 	int error;
 
 	error = dsl_dataset_snap_lookup(hds, ddrsa->ddrsa_oldsnapname, &val);
@@ -2999,8 +3000,14 @@ dsl_dataset_rename_snapshot_sync_impl(dsl_pool_t *dp,
 	VERIFY0(zap_add(dp->dp_meta_objset,
 	    dsl_dataset_phys(hds)->ds_snapnames_zapobj,
 	    ds->ds_snapname, 8, 1, &ds->ds_object, tx));
-	zvol_rename_minors(dp->dp_spa, ddrsa->ddrsa_oldsnapname,
-	    ddrsa->ddrsa_newsnapname, B_TRUE);
+
+	oldname = kmem_asprintf("%s@%s", ddrsa->ddrsa_fsname,
+	    ddrsa->ddrsa_oldsnapname);
+	newname = kmem_asprintf("%s@%s", ddrsa->ddrsa_fsname,
+	    ddrsa->ddrsa_newsnapname);
+	zvol_rename_minors(dp->dp_spa, oldname, newname, B_TRUE);
+	kmem_strfree(oldname);
+	kmem_strfree(newname);
 
 	dsl_dataset_rele(ds, FTAG);
 	return (0);
@@ -3710,16 +3717,19 @@ dsl_dataset_promote_sync(void *arg, dmu_tx_t *tx)
 	spa_history_log_internal_ds(hds, "promote", tx, " ");
 
 	dsl_dir_rele(odd, FTAG);
-	promote_rele(ddpa, FTAG);
 
 	/*
-	 * Transfer common error blocks from old head to new head.
+	 * Transfer common error blocks from old head to new head, before
+	 * calling promote_rele() on ddpa since we need to dereference
+	 * origin_head and hds.
 	 */
 	if (spa_feature_is_enabled(dp->dp_spa, SPA_FEATURE_HEAD_ERRLOG)) {
 		uint64_t old_head = origin_head->ds_object;
 		uint64_t new_head = hds->ds_object;
 		spa_swap_errlog(dp->dp_spa, new_head, old_head, tx);
 	}
+
+	promote_rele(ddpa, FTAG);
 }
 
 /*

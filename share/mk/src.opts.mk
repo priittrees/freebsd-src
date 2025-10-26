@@ -118,6 +118,7 @@ __DEFAULT_YES_OPTIONS = \
     IPFW \
     ISCSI \
     JAIL \
+    JEMALLOC_LG_VADDR_WIDE \
     KDUMP \
     KVM \
     LDNS \
@@ -128,11 +129,14 @@ __DEFAULT_YES_OPTIONS = \
     LLD_IS_LD \
     LLVM_COV \
     LLVM_CXXFILT \
+    LOADER_BIOS_TEXTONLY \
     LOADER_GELI \
     LOADER_KBOOT \
     LOADER_LUA \
     LOADER_OFW \
+    LOADER_PXEBOOT \
     LOADER_UBOOT \
+    LOADER_IA32 \
     LOCALES \
     LOCATE \
     LPR \
@@ -150,7 +154,6 @@ __DEFAULT_YES_OPTIONS = \
     NS_CACHING \
     NTP \
     NUAGEINIT \
-    NVME \
     OFED \
     OPENSSL \
     PAM \
@@ -190,6 +193,7 @@ __DEFAULT_YES_OPTIONS = \
     WIRELESS \
     WPA_SUPPLICANT_EAPOL \
     ZFS \
+    ZFS_TESTS \
     LOADER_ZFS \
     ZONEINFO
 
@@ -204,7 +208,6 @@ __DEFAULT_NO_OPTIONS = \
     DTRACE_TESTS \
     EXPERIMENTAL \
     HESIOD \
-    LOADER_BIOS_TEXTONLY \
     LOADER_VERBOSE \
     LOADER_VERIEXEC_PASS_MANIFEST \
     LLVM_ASSERTIONS \
@@ -321,6 +324,10 @@ BROKEN_OPTIONS+=LOADER_KBOOT
 .if (${__T:Marm*} == "" && ${__T:Mpowerpc*} == "") || ${__T} == "powerpc64le"
 BROKEN_OPTIONS+=LOADER_UBOOT
 .endif
+# The 32-bit UEFI loader is only for amd64
+.if ${__T} != "amd64"
+BROKEN_OPTIONS+=LOADER_IA32
+.endif
 # GELI and Lua in loader currently cause boot failures on powerpc.
 # Further debugging is required -- probably they are just broken on big
 # endian systems generically (they jump to null pointers or try to read
@@ -344,12 +351,6 @@ BROKEN_OPTIONS+=MLX5TOOL
 
 .if ${__T} != "amd64" && ${__T} != "i386" && ${__T} != "aarch64"
 BROKEN_OPTIONS+=HYPERV
-.endif
-
-# NVME is only aarch64, x86 and powerpc64*
-.if ${__T} != "aarch64" && ${__T} != "amd64" && ${__T} != "i386" && \
-    ${__T:Mpowerpc64*} == ""
-BROKEN_OPTIONS+=NVME
 .endif
 
 .if ${__T} == "aarch64" || ${__T} == "amd64" || ${__T} == "i386" || \
@@ -450,6 +451,11 @@ MK_OFED_EXTRA:=	no
 
 .if ${MK_TESTS} == "no"
 MK_DTRACE_TESTS:= no
+MK_ZFS_TESTS:= no
+.endif
+
+.if ${MK_ZFS} == "no"
+MK_ZFS_TESTS:=	no
 .endif
 
 .if ${MK_TESTS_SUPPORT} == "no"

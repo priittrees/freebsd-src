@@ -461,7 +461,7 @@ age_attach(device_t dev)
 	struct age_softc *sc;
 	if_t ifp;
 	uint16_t burst;
-	int error, i, msic, msixc, pmc;
+	int error, i, msic, msixc;
 
 	error = 0;
 	sc = device_get_softc(dev);
@@ -591,12 +591,6 @@ age_attach(device_t dev)
 	age_get_macaddr(sc);
 
 	ifp = sc->age_ifp = if_alloc(IFT_ETHER);
-	if (ifp == NULL) {
-		device_printf(dev, "cannot allocate ifnet structure.\n");
-		error = ENXIO;
-		goto fail;
-	}
-
 	if_setsoftc(ifp, sc);
 	if_initname(ifp, device_get_name(dev), device_get_unit(dev));
 	if_setflags(ifp, IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST);
@@ -607,8 +601,7 @@ age_attach(device_t dev)
 	if_setsendqready(ifp);
 	if_setcapabilities(ifp, IFCAP_HWCSUM | IFCAP_TSO4);
 	if_sethwassist(ifp, AGE_CSUM_FEATURES | CSUM_TSO);
-	if (pci_find_cap(dev, PCIY_PMG, &pmc) == 0) {
-		sc->age_flags |= AGE_FLAG_PMCAP;
+	if (pci_has_pm(dev)) {
 		if_setcapabilitiesbit(ifp, IFCAP_WOL_MAGIC | IFCAP_WOL_MCAST, 0);
 	}
 	if_setcapenable(ifp, if_getcapabilities(ifp));
@@ -635,12 +628,6 @@ age_attach(device_t dev)
 	/* Create local taskq. */
 	sc->age_tq = taskqueue_create_fast("age_taskq", M_WAITOK,
 	    taskqueue_thread_enqueue, &sc->age_tq);
-	if (sc->age_tq == NULL) {
-		device_printf(dev, "could not create taskqueue.\n");
-		ether_ifdetach(ifp);
-		error = ENXIO;
-		goto fail;
-	}
 	taskqueue_start_threads(&sc->age_tq, 1, PI_NET, "%s taskq",
 	    device_get_nameunit(sc->age_dev));
 
@@ -1320,12 +1307,11 @@ age_setwol(struct age_softc *sc)
 	if_t ifp;
 	struct mii_data *mii;
 	uint32_t reg, pmcs;
-	uint16_t pmstat;
-	int aneg, i, pmc;
+	int aneg, i;
 
 	AGE_LOCK_ASSERT(sc);
 
-	if (pci_find_cap(sc->age_dev, PCIY_PMG, &pmc) != 0) {
+	if (!pci_has_pm(sc->age_dev)) {
 		CSR_WRITE_4(sc, AGE_WOL_CFG, 0);
 		/*
 		 * No PME capability, PHY power down.
@@ -1431,11 +1417,8 @@ got_link:
 	}
 
 	/* Request PME. */
-	pmstat = pci_read_config(sc->age_dev, pmc + PCIR_POWER_STATUS, 2);
-	pmstat &= ~(PCIM_PSTAT_PME | PCIM_PSTAT_PMEENABLE);
 	if ((if_getcapenable(ifp) & IFCAP_WOL) != 0)
-		pmstat |= PCIM_PSTAT_PME | PCIM_PSTAT_PMEENABLE;
-	pci_write_config(sc->age_dev, pmc + PCIR_POWER_STATUS, pmstat, 2);
+		pci_enable_pme(sc->age_dev);
 #ifdef notyet
 	/* See above for powering down PHY issues. */
 	if ((if_getcapenable(ifp) & IFCAP_WOL) == 0) {

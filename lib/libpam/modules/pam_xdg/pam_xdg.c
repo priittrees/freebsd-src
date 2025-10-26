@@ -67,7 +67,7 @@ _pam_xdg_open(pam_handle_t *pamh, int flags __unused,
 
 	/* Get user info */
 	rv = pam_get_item(pamh, PAM_USER, (const void **)&user);
-	if (rv != PAM_SUCCESS) {
+	if (rv != PAM_SUCCESS || user == NULL) {
 		PAM_VERBOSE_ERROR("Can't get user information");
 		goto out;
 	}
@@ -108,6 +108,7 @@ _pam_xdg_open(pam_handle_t *pamh, int flags __unused,
 			goto out;
 		}
 	} else {
+		close(rt_dir);
 		/* Check that the already create dir is correctly owned */
 		rv = fstatat(rt_dir_prefix, user, &sb, 0);
 		if (rv == -1) {
@@ -221,7 +222,7 @@ _pam_xdg_close(pam_handle_t *pamh __unused, int flags __unused,
 
 	/* Get user info */
 	rv = pam_get_item(pamh, PAM_USER, (const void **)&user);
-	if (rv != PAM_SUCCESS) {
+	if (rv != PAM_SUCCESS || user == NULL) {
 		PAM_VERBOSE_ERROR("Can't get user information");
 		goto out;
 	}

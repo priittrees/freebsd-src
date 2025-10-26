@@ -320,10 +320,10 @@ struct port_info {
 	uint8_t  port_type;
 	uint8_t  mod_type;
 	uint8_t  port_id;
-	uint8_t  tx_chan;
+	uint8_t  tx_chan;	/* tx TP c-channel */
+	uint8_t  rx_chan;	/* rx TP c-channel */
 	uint8_t  mps_bg_map;	/* rx MPS buffer group bitmap */
 	uint8_t  rx_e_chan_map;	/* rx TP e-channel bitmap */
-	uint8_t  rx_c_chan;	/* rx TP c-channel */
 
 	struct link_config link_cfg;
 	struct ifmedia media;
@@ -471,6 +471,7 @@ struct sge_eq {
 	unsigned int abs_id;	/* absolute SGE id for the eq */
 	uint8_t type;		/* EQ_CTRL/EQ_ETH/EQ_OFLD */
 	uint8_t doorbells;
+	uint8_t port_id;	/* port_id of the port associated with the eq */
 	uint8_t tx_chan;	/* tx channel used by the eq */
 	struct mtx eq_lock;
 
@@ -928,8 +929,9 @@ struct adapter {
 	u_int vxlan_refcount;
 	int rawf_base;
 	int nrawf;
+	u_int vlan_id;
 
-	struct taskqueue *tq[MAX_NCHAN];	/* General purpose taskqueues */
+	struct taskqueue *tq[MAX_NPORTS];	/* General purpose taskqueues */
 	struct port_info *port[MAX_NPORTS];
 	uint8_t chan_map[MAX_NCHAN];		/* channel -> port */
 
@@ -1116,13 +1118,23 @@ forwarding_intr_to_fwq(struct adapter *sc)
 	return (sc->intr_count == 1);
 }
 
-/* Works reliably inside a sync_op or with reg_lock held. */
+/* Works reliably inside a synch_op or with reg_lock held. */
 static inline bool
 hw_off_limits(struct adapter *sc)
 {
-	int off_limits = atomic_load_int(&sc->error_flags) & HW_OFF_LIMITS;
+	const int off_limits = atomic_load_int(&sc->error_flags) & HW_OFF_LIMITS;
 
 	return (__predict_false(off_limits != 0));
+}
+
+/* Works reliably inside a synch_op or with reg_lock held. */
+static inline bool
+hw_all_ok(struct adapter *sc)
+{
+	const int not_ok = atomic_load_int(&sc->error_flags) &
+	    (ADAP_STOPPED | HW_OFF_LIMITS);
+
+	return (__predict_true(not_ok == 0));
 }
 
 static inline int
@@ -1353,8 +1365,6 @@ extern unsigned int t4_ddp_rcvbuf_cache;
 extern device_method_t cxgbe_methods[];
 
 int t4_os_find_pci_capability(struct adapter *, int);
-int t4_os_pci_save_state(struct adapter *);
-int t4_os_pci_restore_state(struct adapter *);
 void t4_os_portmod_changed(struct port_info *);
 void t4_os_link_changed(struct port_info *);
 void t4_iterate(void (*)(struct adapter *, void *), void *);
@@ -1363,6 +1373,7 @@ void t4_add_adapter(struct adapter *);
 int t4_detach_common(device_t);
 int t4_map_bars_0_and_4(struct adapter *);
 int t4_map_bar_2(struct adapter *);
+int t4_adj_doorbells(struct adapter *);
 int t4_setup_intr_handlers(struct adapter *);
 void t4_sysctls(struct adapter *);
 int begin_synchronized_op(struct adapter *, struct vi_info *, int, char *);
@@ -1381,6 +1392,9 @@ void release_tid(struct adapter *, int, struct sge_wrq *);
 int cxgbe_media_change(if_t);
 void cxgbe_media_status(if_t, struct ifmediareq *);
 void t4_os_cim_err(struct adapter *);
+int suspend_adapter(struct adapter *);
+int resume_adapter(struct adapter *);
+int toe_capability(struct vi_info *, bool);
 
 #ifdef KERN_TLS
 /* t6_kern_tls.c */
@@ -1550,7 +1564,10 @@ t4_wrq_tx(struct adapter *sc, struct wrqe *wr)
 	struct sge_wrq *wrq = wr->wrq;
 
 	TXQ_LOCK(wrq);
-	t4_wrq_tx_locked(sc, wrq, wr);
+	if (__predict_true(wrq->eq.flags & EQ_HW_ALLOCATED))
+		t4_wrq_tx_locked(sc, wrq, wr);
+	else
+		free(wr, M_CXGBE);
 	TXQ_UNLOCK(wrq);
 }
 

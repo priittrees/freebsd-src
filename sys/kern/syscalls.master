@@ -498,7 +498,7 @@
 		    int flags
 		);
 	}
-66	AUE_VFORK	STD {
+66	AUE_VFORK	STD|CAPENABLED {
 		int vfork(void);
 	}
 67	AUE_NULL	OBSOL	vread
@@ -1465,7 +1465,7 @@
 		    int inherit
 		);
 	}
-251	AUE_RFORK	STD {
+251	AUE_RFORK	STD|CAPENABLED {
 		int rfork(
 		    int flags
 		);
@@ -3345,6 +3345,21 @@
 		    int type,
 		    uintptr_t idx1,
 		    uintptr_t idx2
+		);
+	}
+589	AUE_NULL	STD|CAPENABLED {
+		int getrlimitusage(
+		    u_int which,
+		    int flags,
+		    _Out_ rlim_t *res
+		);
+	}
+590	AUE_NULL	UNIMPL	fchroot
+591	AUE_SETCRED	STD|CAPENABLED {
+		int setcred(
+		    u_int flags,
+		    _In_reads_bytes_(size) _Contains_ptr_ const struct setcred *wcred,
+		    size_t size
 		);
 	}
 

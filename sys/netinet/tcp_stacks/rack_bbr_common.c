@@ -361,26 +361,15 @@ ctf_process_inbound_raw(struct tcpcb *tp, struct mbuf *m, int has_pkt)
 	int32_t retval, nxt_pkt, tlen, off;
 	int etype = 0;
 	uint16_t drop_hdrlen;
-	uint8_t iptos, no_vn=0;
+	uint8_t iptos;
 
 	inp = tptoinpcb(tp);
 	INP_WLOCK_ASSERT(inp);
 	NET_EPOCH_ASSERT();
-
-	if (m)
-		ifp = m_rcvif(m);
-	else
-		ifp = NULL;
-	if (ifp == NULL) {
-		/*
-		 * We probably should not work around
-		 * but kassert, since lro alwasy sets rcvif.
-		 */
-		no_vn = 1;
-		goto skip_vnet;
-	}
+	KASSERT(m != NULL, ("ctf_process_inbound_raw: m == NULL"));
+	ifp = m_rcvif(m);
+	KASSERT(ifp != NULL, ("ctf_process_inbound_raw: ifp == NULL"));
 	CURVNET_SET(ifp->if_vnet);
-skip_vnet:
 	tcp_get_usecs(&tv);
 	while (m) {
 		m_save = m->m_nextpkt;
@@ -466,19 +455,15 @@ skip_vnet:
 				m_freem(m);
 				m = m_save;
 			}
-			if (no_vn == 0) {
-				CURVNET_RESTORE();
-			}
+			CURVNET_RESTORE();
 			INP_UNLOCK_ASSERT(inp);
-			return(retval);
+			return (retval);
 		}
 skipped_pkt:
 		m = m_save;
 	}
-	if (no_vn == 0) {
-		CURVNET_RESTORE();
-	}
-	return(retval);
+	CURVNET_RESTORE();
+	return (0);
 }
 
 int
@@ -535,8 +520,8 @@ void
 ctf_ack_war_checks(struct tcpcb *tp, uint32_t *ts, uint32_t *cnt)
 {
 	if ((ts != NULL) && (cnt != NULL) &&
-	    (tcp_ack_war_time_window > 0) &&
-	    (tcp_ack_war_cnt > 0)) {
+	    (V_tcp_ack_war_time_window > 0) &&
+	    (V_tcp_ack_war_cnt > 0)) {
 		/* We are possibly doing ack war prevention */
 		uint32_t cts;
 
@@ -550,9 +535,9 @@ ctf_ack_war_checks(struct tcpcb *tp, uint32_t *ts, uint32_t *cnt)
 		if (TSTMP_LT((*ts), cts)) {
 			/* Timestamp is in the past */
 			*cnt = 0;
-			*ts = (cts + tcp_ack_war_time_window);
+			*ts = (cts + V_tcp_ack_war_time_window);
 		}
-		if (*cnt < tcp_ack_war_cnt) {
+		if (*cnt < V_tcp_ack_war_cnt) {
 			*cnt = (*cnt + 1);
 			tp->t_flags |= TF_ACKNOW;
 		} else
@@ -772,8 +757,8 @@ __ctf_process_rst(struct mbuf *m, struct tcphdr *th, struct socket *so,
 
 			KMOD_TCPSTAT_INC(tcps_badrst);
 			if ((ts != NULL) && (cnt != NULL) &&
-			    (tcp_ack_war_time_window > 0) &&
-			    (tcp_ack_war_cnt > 0)) {
+			    (V_tcp_ack_war_time_window > 0) &&
+			    (V_tcp_ack_war_cnt > 0)) {
 				/* We are possibly preventing an  ack-rst  war prevention */
 				uint32_t cts;
 
@@ -787,9 +772,9 @@ __ctf_process_rst(struct mbuf *m, struct tcphdr *th, struct socket *so,
 				if (TSTMP_LT((*ts), cts)) {
 					/* Timestamp is in the past */
 					*cnt = 0;
-					*ts = (cts + tcp_ack_war_time_window);
+					*ts = (cts + V_tcp_ack_war_time_window);
 				}
-				if (*cnt < tcp_ack_war_cnt) {
+				if (*cnt < V_tcp_ack_war_cnt) {
 					*cnt = (*cnt + 1);
 					send_challenge = 1;
 				} else

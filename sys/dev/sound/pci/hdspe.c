@@ -37,7 +37,6 @@
 
 #include <dev/sound/pcm/sound.h>
 #include <dev/sound/pci/hdspe.h>
-#include <dev/sound/chip.h>
 
 #include <dev/pci/pcireg.h>
 #include <dev/pci/pcivar.h>
@@ -396,7 +395,8 @@ hdspe_probe(device_t dev)
 {
 	uint32_t rev;
 
-	if (pci_get_vendor(dev) == PCI_VENDOR_XILINX &&
+	if ((pci_get_vendor(dev) == PCI_VENDOR_XILINX ||
+	    pci_get_vendor(dev) == PCI_VENDOR_RME) &&
 	    pci_get_device(dev) == PCI_DEVICE_XILINX_HDSPE) {
 		rev = pci_get_revid(dev);
 		switch (rev) {
@@ -491,7 +491,7 @@ hdspe_attach(device_t dev)
 		return (ENXIO);
 
 	for (i = 0; i < HDSPE_MAX_CHANS && chan_map[i].descr != NULL; i++) {
-		scp = malloc(sizeof(struct sc_pcminfo), M_DEVBUF, M_NOWAIT | M_ZERO);
+		scp = malloc(sizeof(struct sc_pcminfo), M_DEVBUF, M_WAITOK | M_ZERO);
 		scp->hc = &chan_map[i];
 		scp->sc = sc;
 		scp->dev = device_add_child(dev, "pcm", -1);
@@ -525,6 +525,12 @@ hdspe_attach(device_t dev)
 	    "List of supported clock sources");
 
 	return (bus_generic_attach(dev));
+}
+
+static void
+hdspe_child_deleted(device_t dev, device_t child)
+{
+	free(device_get_ivars(child), M_DEVBUF);
 }
 
 static void
@@ -574,6 +580,7 @@ static device_method_t hdspe_methods[] = {
 	DEVMETHOD(device_probe,     hdspe_probe),
 	DEVMETHOD(device_attach,    hdspe_attach),
 	DEVMETHOD(device_detach,    hdspe_detach),
+	DEVMETHOD(bus_child_deleted, hdspe_child_deleted),
 	{ 0, 0 }
 };
 

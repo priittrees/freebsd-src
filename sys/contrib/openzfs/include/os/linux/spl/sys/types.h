@@ -38,7 +38,9 @@ typedef unsigned long		ulong_t;
 typedef unsigned long long	u_longlong_t;
 typedef long long		longlong_t;
 
+#ifndef HAVE_KERNEL_INTPTR_T
 typedef long			intptr_t;
+#endif
 typedef unsigned long long	rlim64_t;
 
 typedef struct task_struct	kthread_t;
@@ -80,5 +82,11 @@ typedef struct user_namespace	zidmap_t;
 #endif
 
 extern zidmap_t *zfs_init_idmap;
+
+#ifdef HAVE_1ARG_ASSIGN_STR
+#define	__assign_str_impl(a, b)		__assign_str(a)
+#else
+#define	__assign_str_impl(a, b)		__assign_str(a, b)
+#endif
 
 #endif	/* _SPL_TYPES_H */

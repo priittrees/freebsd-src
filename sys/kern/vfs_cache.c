@@ -511,8 +511,7 @@ SYSCTL_INT(_debug, OID_AUTO, vfscache, CTLFLAG_RW, &doingcache, 0,
 #endif
 
 /* Export size information to userland */
-SYSCTL_INT(_debug_sizeof, OID_AUTO, namecache, CTLFLAG_RD, SYSCTL_NULL_INT_PTR,
-    sizeof(struct namecache), "sizeof(struct namecache)");
+SYSCTL_SIZEOF_STRUCT(namecache);
 
 /*
  * The new name cache statistics
@@ -983,6 +982,26 @@ sysctl_nchstats(SYSCTL_HANDLER_ARGS)
 SYSCTL_PROC(_vfs_cache, OID_AUTO, nchstats, CTLTYPE_OPAQUE | CTLFLAG_RD |
     CTLFLAG_MPSAFE, 0, 0, sysctl_nchstats, "LU",
     "VFS cache effectiveness statistics");
+
+static int
+sysctl_hitpct(SYSCTL_HANDLER_ARGS)
+{
+	long poshits, neghits, miss, total;
+	long pct;
+
+	poshits = counter_u64_fetch(numposhits);
+	neghits = counter_u64_fetch(numneghits);
+	miss = counter_u64_fetch(nummiss);
+	total = poshits + neghits + miss;
+
+	pct = 0;
+	if (total != 0)
+		pct = ((poshits + neghits) * 100) / total;
+	return (sysctl_handle_int(oidp, 0, pct, req));
+}
+SYSCTL_PROC(_vfs_cache_stats, OID_AUTO, hitpct,
+    CTLTYPE_INT | CTLFLAG_MPSAFE | CTLFLAG_RD, NULL, 0, sysctl_hitpct,
+    "I", "Percentage of hits");
 
 static void
 cache_recalc_neg_min(void)
@@ -3158,6 +3177,8 @@ kern___realpathat(struct thread *td, int fd, const char *path, char *buf,
 
 	if (nd.ni_vp->v_type == VREG && nd.ni_dvp->v_type != VDIR &&
 	    (nd.ni_vp->v_vflag & VV_ROOT) != 0) {
+		struct vnode *covered_vp;
+
 		/*
 		 * This happens if vp is a file mount. The call to
 		 * vn_fullpath_hardlink can panic if path resolution can't be
@@ -3167,7 +3188,6 @@ kern___realpathat(struct thread *td, int fd, const char *path, char *buf,
 		 * this should have a unique global path since we disallow
 		 * mounting on linked files.
 		 */
-		struct vnode *covered_vp;
 		error = vn_lock(nd.ni_vp, LK_SHARED);
 		if (error != 0)
 			goto out;
@@ -3177,11 +3197,20 @@ kern___realpathat(struct thread *td, int fd, const char *path, char *buf,
 		error = vn_fullpath(covered_vp, &retbuf, &freebuf);
 		vrele(covered_vp);
 	} else {
-		error = vn_fullpath_hardlink(nd.ni_vp, nd.ni_dvp, nd.ni_cnd.cn_nameptr,
-		    nd.ni_cnd.cn_namelen, &retbuf, &freebuf, &size);
+		error = vn_fullpath_hardlink(nd.ni_vp, nd.ni_dvp,
+		    nd.ni_cnd.cn_nameptr, nd.ni_cnd.cn_namelen, &retbuf,
+		    &freebuf, &size);
 	}
 	if (error == 0) {
-		error = copyout(retbuf, buf, size);
+		size_t len;
+
+		len = strlen(retbuf) + 1;
+		if (size < len)
+			error = ENAMETOOLONG;
+		else if (pathseg == UIO_USERSPACE)
+			error = copyout(retbuf, buf, len);
+		else
+			memcpy(buf, retbuf, len);
 		free(freebuf, M_TEMP);
 	}
 out:
@@ -4396,7 +4425,7 @@ cache_can_fplookup(struct cache_fpl *fpl)
 		cache_fpl_aborted_early(fpl);
 		return (false);
 	}
-	if (IN_CAPABILITY_MODE(td)) {
+	if (IN_CAPABILITY_MODE(td) || CAP_TRACING(td)) {
 		cache_fpl_aborted_early(fpl);
 		return (false);
 	}

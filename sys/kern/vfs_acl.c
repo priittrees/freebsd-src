@@ -146,7 +146,7 @@ acl_copyin(const void *user_acl, struct acl *kernel_acl, acl_type_t type)
 		error = copyin(user_acl, &old, sizeof(old));
 		if (error != 0)
 			break;
-		acl_copy_oldacl_into_acl(&old, kernel_acl);
+		error = acl_copy_oldacl_into_acl(&old, kernel_acl);
 		break;
 
 	default:
@@ -552,6 +552,7 @@ kern___acl_aclcheck_path(struct thread *td, const char *path, acl_type_t type,
 	error = namei(&nd);
 	if (error == 0) {
 		error = vacl_aclcheck(td, nd.ni_vp, type, aclp);
+		vrele(nd.ni_vp);
 		NDFREE_PNBUF(&nd);
 	}
 	return (error);

@@ -1,3 +1,6 @@
+.\"-
+.\" SPDX-License-Identifer: BSD-2-Clause
+.\"
 .\" Copyright © 2023 The FreeBSD Foundation
 .\"
 .\" This documentation was written by Ed Maste <emaste@freebsd.org>, and
@@ -25,7 +28,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd October 6, 2023
+.Dd June 1, 2024
 .Dt MITIGATIONS 7
 .Os
 .Sh NAME
@@ -41,6 +44,7 @@ or per-process basis, some are optionally enabled or disabled at compile time,
 and some are inherent to the implementation and have no controls.
 .Pp
 The following vulnerability mitigations are covered in this document:
+.Pp
 .Bl -bullet -compact
 .It
 Address Space Layout Randomization (ASLR)
@@ -54,14 +58,16 @@ Write XOR Execute page protection policy
 Relocation Read-Only (RELRO)
 .It
 Bind Now
-.\".It
-.\"Stack Smashing Protection (SSP)
-.\".It
-.\"Supervisor Mode Memory Protection
 .It
-Hardware Vulnerability Mitigation Controls
+Stack Overflow Protection
+.It
+Supervisor Mode Memory Protection
 .It
 Capsicum
+.It
+Firmware and Microcode
+.It
+Architectural Vulnerability Mitigations
 .El
 .Pp
 Please note that the effectiveness and availability of these mitigations may
@@ -148,7 +154,7 @@ proccontrol
 .Ss Position Independent Executable (PIE)
 PIE binaries are executable files that do not have a fixed load address.
 They can be loaded at an arbitrary memory address by the
-.Xr rtld
+.Xr rtld 1
 run-time linker.
 With ASLR they are loaded at a random address on each execution.
 .\"
@@ -179,17 +185,19 @@ Allow 64-bit processes to map pages simultaneously writable and executable.
 .\"
 .Ss PROT_MAX
 .Dv PROT_MAX
-is a FreeBSD-specific extension to
+is a
+.Fx Ns
+-specific extension to
 .Xr mmap 2 .
 .Dv PROT_MAX
 provides the ability to set the maximum protection of a region allocated by
-.Xr mmap
+.Xr mmap 2
 and later altered by
-.Xr mprotect .
+.Xr mprotect 2 .
 For example, memory allocated originally with an mmap prot argument of
 PROT_MAX(PROT_READ | PROT_WRITE) | PROT_READ
 may be made writable by a future
-.Xr mprotect
+.Xr mprotect 2
 call, but may not be made executable.
 .\"
 .Ss Relocation Read-Only (RELRO)
@@ -232,22 +240,112 @@ preventing attacks on the relocation table.
 Note that this results in a nonstandard Application Binary Interface (ABI),
 and it is possible that some applications may not function correctly.
 .\"
-.\".Ss Stack Smashing Protection (SSP)
+.Ss Stack Overflow Protection
+.Fx
+supports stack overflow protection using the Stack Smashing Protector
+.Pq SSP
+compiler feature.
+In userland, SSP adds a per-process randomized canary at the end of every stack
+frame which is checked for corruption upon return from the function.
+In the kernel, a single randomized canary is used globally except on aarch64,
+which has a
+.Dv PERTHREAD_SSP
+.Xr config 8
+option to enable per-thread randomized canaries.
+If stack corruption is detected, then the process aborts to avoid potentially
+malicious execution as a result of the corruption.
+SSP may be enabled or disabled when building
+.Fx
+base with the
+.Xr src.conf 5
+SSP knob.
+.Pp
+When
+.Va WITH_SSP
+is enabled, which is the default, world is built with the
+.Fl fstack-protector-strong
+compiler option.
+The kernel is built with the
+.Fl fstack-protector
+option.
+.Pp
+In addition to SSP, a
+.Dq FORTIFY_SOURCE
+implementation is supported up to level 2 by defining
+.Va _FORTIFY_SOURCE
+to
+.Dv 1
+or
+.Dv 2
+before including any
+.Fx
+headers.
+.Fx
+world builds can set
+.Va FORTIFY_SOURCE
+to provide a default value for
+.Va _FORTIFY_SOURCE .
+When enabled,
+.Dq FORTIFY_SOURCE
+enables extra bounds checking in various functions that accept buffers to be
+written into.
+These functions currently have extra bounds checking support:
+.Bl -column -offset indent "snprintf()" "memmove()" "strncpy()" "vsnprintf()" "readlink()"
+.It Fn bcopy Ta Fn bzero Ta Fn fgets Ta Fn getcwd Ta Fn gets
+.It Fn memcpy Ta Fn memmove Ta Fn memset Ta Fn read Ta Fn readlink
+.It Fn snprintf Ta Fn sprintf Ta Fn stpcpy Ta Fn stpncpy Ta Fn strcat
+.It Fn strcpy Ta Fn strncat Ta Fn strncpy Ta Fn vsnprintf Ta Fn vsprintf
+.El
+.Pp
+.Dq FORTIFY_SOURCE
+requires compiler support from
+.Xr clang 1
+or
+.Xr gcc 1 ,
+which provide the
+.Xr __builtin_object_size 3
+function that is used to determine the bounds of an object.
+This feature works best at optimization levels
+.Fl O1
+and above, as some object sizes may be less obvious without some data that the
+compiler would collect in an optimization pass.
+.Pp
+Similar to SSP, violating the bounds of an object will cause the program to
+abort in an effort to avoid malicious execution.
+This effectively provides finer-grained protection than SSP for some class of
+function and system calls, along with some protection for buffers allocated as
+part of the program data.
 .\"
-.\".Ss Supervisor mode memory protection
-.\"
-.Ss Hardware vulnerability controls
-See
-.Xr security 7
-for more information.
+.Ss Supervisor mode memory protection
+Certain processors include features that prevent unintended access to memory
+pages accessible to userspace (non-privileged) code, while in a privileged
+mode.
+One feature prevents execution, intended to mitigate exploitation of kernel
+vulnerabilities from userland.
+Another feature prevents unintended reads from or writes to user space memory
+from the kernel.
+This also provides effective protection against NULL pointer dereferences from
+kernel.
+.Bl -column -offset indent "Architecture" "Feature" "Access Type Prevented"
+.It Sy Architecture Ta Sy Feature Ta Sy Access Type Prevented
+.It amd64       Ta SMAP  Ta Read / Write
+.It amd64       Ta SMEP  Ta Execute
+.It arm64       Ta PAN   Ta Read / Write
+.It arm64       Ta PXN   Ta Execute
+.It riscv       Ta SUM   Ta Read / Write
+.It riscv       Ta -     Ta Execute
+.El
+.Pp
+These features are automatically used by the kernel.
+There is no user-facing configuration.
 .\"
 .Ss Capsicum
 Capsicum is a lightweight OS capability and sandbox framework.
 See
 .Xr capsicum 4
 for more information.
-.Pp
 .Sh HARDWARE VULNERABILITY MITIGATIONS
+.Ss Firmware and Microcode
 Recent years have seen an unending stream of new hardware vulnerabilities,
 notably CPU ones generally caused by detectable microarchitectural side-effects
 of speculative execution which leak private data from some other thread or
@@ -255,18 +353,36 @@ process or sometimes even internal CPU state that is normally inaccessible.
 Hardware vendors usually address these vulnerabilities as they are discovered by
 releasing microcode updates, which may then be bundled into platform firmware
 updates
-.Pq historically called BIOS updates for PCs .
+.Pq historically called BIOS updates for PCs
+or packages to be updated by the operating system at boot time.
+.Pp
+Platform firmware updates, if available from the manufacturer,
+are the best defense as they provide coverage during early boot.
+Install them with
+.Pa sysutils/flashrom
+from the
+.Fx
+Ports Collection.
+.Pp
+If platform firmware updates are no longer available,
+packaged microcode is available for installation at
+.Pa sysutils/cpu-microcode
+and can be loaded at runtime using
+.Xr loader.conf 5 ,
+see the package message for more details.
 .Pp
 The best defense overall against hardware vulnerabilities is to timely apply
-these updates when available and to disable the affected hardware's problematic
-functionalities when possible (e.g., CPU Simultaneous Multi-Threading).
+these updates when available, as early as possible in the boot process,
+and to disable the affected hardware's problematic functionalities when possible
+(e.g., CPU Simultaneous Multi-Threading).
 Software mitigations are only partial substitutes for these, but they can be
 helpful on out-of-support hardware or as complements for just-discovered
 vulnerabilities not yet addressed by vendors.
 Some software mitigations depend on hardware capabilities provided by a
 microcode update.
-.Pp
-FreeBSD's usual policy is to apply by default all OS-level mitigations that do
+.Ss Architectural Vulnerability Mitigations
+.Fx Ap s
+usual policy is to apply by default all OS-level mitigations that do
 not require recompilation, except those the particular hardware it is running on
 is known not to be vulnerable to
 .Pq which sometimes requires firmware updates ,
@@ -355,6 +471,10 @@ should be considered when configuring and deploying them in a
 .Fx
 system.
 .Pp
+Additional mitigation knobs are listed in the
+.Sx KNOBS AND TWEAKS
+section of
+.Xr security 7 .
 .Sh SEE ALSO
 .Xr elfctl 1 ,
 .Xr proccontrol 1 ,

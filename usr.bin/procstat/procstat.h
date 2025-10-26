@@ -64,7 +64,10 @@ void	procstat_cred(struct procstat *prstat, struct kinfo_proc *kipp);
 void	procstat_cs(struct procstat *prstat, struct kinfo_proc *kipp);
 void	procstat_env(struct procstat *prstat, struct kinfo_proc *kipp);
 void	procstat_files(struct procstat *prstat, struct kinfo_proc *kipp);
+void	procstat_kqueues(struct procstat *prstat, struct kinfo_proc *kipp);
 void	procstat_kstack(struct procstat *prstat, struct kinfo_proc *kipp);
+void	procstat_rlimitusage(struct procstat *procstat,
+	    struct kinfo_proc *kipp);
 void	procstat_pargs(struct procstat *prstat, struct kinfo_proc *kipp);
 void	procstat_penv(struct procstat *prstat, struct kinfo_proc *kipp);
 void	procstat_ptlwpinfo(struct procstat *prstat, struct kinfo_proc *kipp);

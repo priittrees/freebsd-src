@@ -434,6 +434,28 @@ ieee80211_ifdetach(struct ieee80211com *ic)
 	IEEE80211_LOCK_DESTROY(ic);
 }
 
+/*
+ * Called by drivers during attach to set the supported
+ * cipher set for software encryption.
+ */
+void
+ieee80211_set_software_ciphers(struct ieee80211com *ic,
+    uint32_t cipher_suite)
+{
+	ieee80211_crypto_set_supported_software_ciphers(ic, cipher_suite);
+}
+
+/*
+ * Called by drivers during attach to set the supported
+ * cipher set for hardware encryption.
+ */
+void
+ieee80211_set_hardware_ciphers(struct ieee80211com *ic,
+    uint32_t cipher_suite)
+{
+	ieee80211_crypto_set_supported_hardware_ciphers(ic, cipher_suite);
+}
+
 struct ieee80211com *
 ieee80211_find_com(const char *name)
 {
@@ -528,10 +550,6 @@ ieee80211_vap_setup(struct ieee80211com *ic, struct ieee80211vap *vap,
 	struct ifnet *ifp;
 
 	ifp = if_alloc(IFT_ETHER);
-	if (ifp == NULL) {
-		ic_printf(ic, "%s: unable to allocate ifnet\n", __func__);
-		return ENOMEM;
-	}
 	if_initname(ifp, name, unit);
 	ifp->if_softc = vap;			/* back pointer */
 	ifp->if_flags = IFF_SIMPLEX | IFF_BROADCAST | IFF_MULTICAST;
@@ -714,6 +732,8 @@ ieee80211_vap_attach(struct ieee80211vap *vap, ifm_change_cb_t media_change,
 	ieee80211_syncflag_vht_locked(ic, IEEE80211_FVHT_USEVHT80);
 	ieee80211_syncflag_vht_locked(ic, IEEE80211_FVHT_USEVHT160);
 	ieee80211_syncflag_vht_locked(ic, IEEE80211_FVHT_USEVHT80P80);
+	ieee80211_syncflag_vht_locked(ic, IEEE80211_FVHT_STBC_TX);
+	ieee80211_syncflag_vht_locked(ic, IEEE80211_FVHT_STBC_RX);
 	IEEE80211_UNLOCK(ic);
 
 	return 1;
@@ -771,6 +791,8 @@ ieee80211_vap_detach(struct ieee80211vap *vap)
 	ieee80211_syncflag_vht_locked(ic, IEEE80211_FVHT_USEVHT80);
 	ieee80211_syncflag_vht_locked(ic, IEEE80211_FVHT_USEVHT160);
 	ieee80211_syncflag_vht_locked(ic, IEEE80211_FVHT_USEVHT80P80);
+	ieee80211_syncflag_vht_locked(ic, IEEE80211_FVHT_STBC_TX);
+	ieee80211_syncflag_vht_locked(ic, IEEE80211_FVHT_STBC_RX);
 
 	/* NB: this handles the bpfdetach done below */
 	ieee80211_syncflag_ext_locked(ic, IEEE80211_FEXT_BPF);
@@ -1162,12 +1184,14 @@ struct vht_chan_range vht80_chan_ranges[] = {
 	{ 5570, 5650 },
 	{ 5650, 5730 },
 	{ 5735, 5815 },
+	{ 5815, 5895 },
 	{ 0, 0 }
 };
 
 struct vht_chan_range vht160_chan_ranges[] = {
 	{ 5170, 5330 },
 	{ 5490, 5650 },
+	{ 5735, 5895 },
 	{ 0, 0 }
 };
 

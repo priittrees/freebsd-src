@@ -98,7 +98,7 @@ struct vxlan_socket_mc_info {
 		60 /* Maximum IPv4 header len */ - \
 		sizeof(struct udphdr) - \
 		sizeof(struct vxlan_header) - \
-		ETHER_HDR_LEN - ETHER_CRC_LEN - ETHER_VLAN_ENCAP_LEN)
+		ETHER_HDR_LEN - ETHER_VLAN_ENCAP_LEN)
 #define VXLAN_BASIC_IFCAPS (IFCAP_LINKSTATE | IFCAP_JUMBO_MTU)
 
 #define VXLAN_SO_MC_MAX_GROUPS		32
@@ -368,7 +368,7 @@ static bool	vxlan_rcv_udp_packet(struct mbuf *, int, struct inpcb *,
 static int	vxlan_input(struct vxlan_socket *, uint32_t, struct mbuf **,
 		    const struct sockaddr *);
 
-static int	vxlan_stats_alloc(struct vxlan_softc *);
+static void	vxlan_stats_alloc(struct vxlan_softc *);
 static void	vxlan_stats_free(struct vxlan_softc *);
 static void	vxlan_set_default_config(struct vxlan_softc *);
 static int	vxlan_set_user_config(struct vxlan_softc *,
@@ -420,7 +420,8 @@ static struct mtx vxlan_list_mtx;
 #define VXLAN_LIST_LOCK()	mtx_lock(&vxlan_list_mtx)
 #define VXLAN_LIST_UNLOCK()	mtx_unlock(&vxlan_list_mtx)
 
-static LIST_HEAD(, vxlan_socket) vxlan_socket_list;
+static LIST_HEAD(, vxlan_socket) vxlan_socket_list =
+    LIST_HEAD_INITIALIZER(vxlan_socket_list);
 
 static eventhandler_tag vxlan_ifdetach_event_tag;
 
@@ -429,9 +430,11 @@ SYSCTL_NODE(_net_link, OID_AUTO, vxlan, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
     "Virtual eXtensible Local Area Network");
 
 static int vxlan_legacy_port = 0;
-TUNABLE_INT("net.link.vxlan.legacy_port", &vxlan_legacy_port);
+SYSCTL_INT(_net_link_vxlan, OID_AUTO, legacy_port, CTLFLAG_RDTUN,
+    &vxlan_legacy_port, 0, "Use legacy port");
 static int vxlan_reuse_port = 0;
-TUNABLE_INT("net.link.vxlan.reuse_port", &vxlan_reuse_port);
+SYSCTL_INT(_net_link_vxlan, OID_AUTO, reuse_port, CTLFLAG_RDTUN,
+    &vxlan_reuse_port, 0, "Re-use port");
 
 /*
  * This macro controls the default upper limitation on nesting of vxlan
@@ -1814,6 +1817,7 @@ vxlan_teardown_locked(struct vxlan_softc *sc)
 {
 	struct ifnet *ifp;
 	struct vxlan_socket *vso;
+	bool running;
 
 	sx_assert(&vxlan_sx, SA_XLOCKED);
 	VXLAN_LOCK_WASSERT(sc);
@@ -1821,6 +1825,7 @@ vxlan_teardown_locked(struct vxlan_softc *sc)
 
 	ifp = sc->vxl_ifp;
 	ifp->if_flags &= ~IFF_UP;
+	running = (ifp->if_drv_flags & IFF_DRV_RUNNING) != 0;
 	ifp->if_drv_flags &= ~IFF_DRV_RUNNING;
 	callout_stop(&sc->vxl_callout);
 	vso = sc->vxl_sock;
@@ -1828,8 +1833,10 @@ vxlan_teardown_locked(struct vxlan_softc *sc)
 
 	VXLAN_WUNLOCK(sc);
 	if_link_state_change(ifp, LINK_STATE_DOWN);
-	EVENTHANDLER_INVOKE(vxlan_stop, ifp, sc->vxl_src_addr.in4.sin_family,
-	    ntohs(sc->vxl_src_addr.in4.sin_port));
+	if (running)
+		EVENTHANDLER_INVOKE(vxlan_stop, ifp,
+		    sc->vxl_src_addr.in4.sin_family,
+		    ntohs(sc->vxl_src_addr.in4.sin_port));
 
 	if (vso != NULL) {
 		vxlan_socket_remove_softc(vso, sc);
@@ -2924,27 +2931,14 @@ out:
 	return (error);
 }
 
-static int
+static void
 vxlan_stats_alloc(struct vxlan_softc *sc)
 {
 	struct vxlan_statistics *stats = &sc->vxl_stats;
 
 	stats->txcsum = counter_u64_alloc(M_WAITOK);
-	if (stats->txcsum == NULL)
-		goto failed;
-
 	stats->tso = counter_u64_alloc(M_WAITOK);
-	if (stats->tso == NULL)
-		goto failed;
-
 	stats->rxcsum = counter_u64_alloc(M_WAITOK);
-	if (stats->rxcsum == NULL)
-		goto failed;
-
-	return (0);
-failed:
-	vxlan_stats_free(sc);
-	return (ENOMEM);
 }
 
 static void
@@ -2952,18 +2946,9 @@ vxlan_stats_free(struct vxlan_softc *sc)
 {
 	struct vxlan_statistics *stats = &sc->vxl_stats;
 
-	if (stats->txcsum != NULL) {
-		counter_u64_free(stats->txcsum);
-		stats->txcsum = NULL;
-	}
-	if (stats->tso != NULL) {
-		counter_u64_free(stats->tso);
-		stats->tso = NULL;
-	}
-	if (stats->rxcsum != NULL) {
-		counter_u64_free(stats->rxcsum);
-		stats->rxcsum = NULL;
-	}
+	counter_u64_free(stats->txcsum);
+	counter_u64_free(stats->tso);
+	counter_u64_free(stats->rxcsum);
 }
 
 static void
@@ -3234,9 +3219,6 @@ vxlan_clone_create(struct if_clone *ifc, char *name, size_t len,
 	sc->vxl_unit = ifd->unit;
 	sc->vxl_fibnum = curthread->td_proc->p_fibnum;
 	vxlan_set_default_config(sc);
-	error = vxlan_stats_alloc(sc);
-	if (error != 0)
-		goto fail;
 
 	if (ifd->params != NULL) {
 		error = ifc_copyin(ifd, &vxlp, sizeof(vxlp));
@@ -3248,12 +3230,8 @@ vxlan_clone_create(struct if_clone *ifc, char *name, size_t len,
 			goto fail;
 	}
 
+	vxlan_stats_alloc(sc);
 	ifp = if_alloc(IFT_ETHER);
-	if (ifp == NULL) {
-		error = ENOSPC;
-		goto fail;
-	}
-
 	sc->vxl_ifp = ifp;
 	rm_init(&sc->vxl_lock, "vxlanrm");
 	callout_init_rw(&sc->vxl_callout, &sc->vxl_lock, 0);
@@ -3635,11 +3613,9 @@ vxlan_tunable_int(struct vxlan_softc *sc, const char *knob, int def)
 static void
 vxlan_ifdetach_event(void *arg __unused, struct ifnet *ifp)
 {
-	struct vxlan_softc_head list;
+	struct vxlan_softc_head list = LIST_HEAD_INITIALIZER(list);
 	struct vxlan_socket *vso;
 	struct vxlan_softc *sc, *tsc;
-
-	LIST_INIT(&list);
 
 	if (ifp->if_flags & IFF_RENAMING)
 		return;
@@ -3668,7 +3644,6 @@ vxlan_load(void)
 {
 
 	mtx_init(&vxlan_list_mtx, "vxlan list", NULL, MTX_DEF);
-	LIST_INIT(&vxlan_socket_list);
 	vxlan_ifdetach_event_tag = EVENTHANDLER_REGISTER(ifnet_departure_event,
 	    vxlan_ifdetach_event, NULL, EVENTHANDLER_PRI_ANY);
 

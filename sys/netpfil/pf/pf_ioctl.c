@@ -106,7 +106,6 @@ static void		 pf_empty_kpool(struct pf_kpalist *);
 static int		 pfioctl(struct cdev *, u_long, caddr_t, int,
 			    struct thread *);
 static int		 pf_begin_eth(uint32_t *, const char *);
-static void		 pf_rollback_eth_cb(struct epoch_context *);
 static int		 pf_rollback_eth(uint32_t, const char *);
 static int		 pf_commit_eth(uint32_t, const char *);
 static void		 pf_free_eth_rule(struct pf_keth_rule *);
@@ -198,6 +197,16 @@ VNET_DEFINE_STATIC(bool, pf_filter_local) = false;
 SYSCTL_BOOL(_net_pf, OID_AUTO, filter_local, CTLFLAG_VNET | CTLFLAG_RW,
     &VNET_NAME(pf_filter_local), false,
     "Enable filtering for packets delivered to local network stack");
+
+#ifdef PF_DEFAULT_TO_DROP
+VNET_DEFINE_STATIC(bool, default_to_drop) = true;
+#else
+VNET_DEFINE_STATIC(bool, default_to_drop);
+#endif
+#define	V_default_to_drop VNET(default_to_drop)
+SYSCTL_BOOL(_net_pf, OID_AUTO, default_to_drop, CTLFLAG_RDTUN | CTLFLAG_VNET,
+    &VNET_NAME(default_to_drop), false,
+    "Make the default rule drop all packets.");
 
 static void		 pf_init_tagset(struct pf_tagset *, unsigned int *,
 			    unsigned int);
@@ -335,11 +344,7 @@ pfattach_vnet(void)
 
 	/* default rule should never be garbage collected */
 	V_pf_default_rule.entries.tqe_prev = &V_pf_default_rule.entries.tqe_next;
-#ifdef PF_DEFAULT_TO_DROP
-	V_pf_default_rule.action = PF_DROP;
-#else
-	V_pf_default_rule.action = PF_PASS;
-#endif
+	V_pf_default_rule.action = V_default_to_drop ? PF_DROP : PF_PASS;
 	V_pf_default_rule.nr = -1;
 	V_pf_default_rule.rtableid = -1;
 
@@ -776,23 +781,6 @@ pf_begin_eth(uint32_t *ticket, const char *anchor)
 	return (0);
 }
 
-static void
-pf_rollback_eth_cb(struct epoch_context *ctx)
-{
-	struct pf_keth_ruleset *rs;
-
-	rs = __containerof(ctx, struct pf_keth_ruleset, epoch_ctx);
-
-	CURVNET_SET(rs->vnet);
-
-	PF_RULES_WLOCK();
-	pf_rollback_eth(rs->inactive.ticket,
-	    rs->anchor ? rs->anchor->path : "");
-	PF_RULES_WUNLOCK();
-
-	CURVNET_RESTORE();
-}
-
 static int
 pf_rollback_eth(uint32_t ticket, const char *anchor)
 {
@@ -886,15 +874,12 @@ pf_commit_eth(uint32_t ticket, const char *anchor)
 	pf_eth_calc_skip_steps(rs->inactive.rules);
 
 	rules = rs->active.rules;
-	ck_pr_store_ptr(&rs->active.rules, rs->inactive.rules);
+	atomic_store_ptr(&rs->active.rules, rs->inactive.rules);
 	rs->inactive.rules = rules;
 	rs->inactive.ticket = rs->active.ticket;
 
-	/* Clean up inactive rules (i.e. previously active rules), only when
-	 * we're sure they're no longer used. */
-	NET_EPOCH_CALL(pf_rollback_eth_cb, &rs->epoch_ctx);
-
-	return (0);
+	return (pf_rollback_eth(rs->inactive.ticket,
+	    rs->anchor ? rs->anchor->path : ""));
 }
 
 #ifdef ALTQ
@@ -2071,7 +2056,8 @@ pf_rule_to_krule(const struct pf_rule *rule, struct pf_krule *krule)
 	krule->os_fingerprint = rule->os_fingerprint;
 
 	krule->rtableid = rule->rtableid;
-	bcopy(rule->timeout, krule->timeout, sizeof(krule->timeout));
+	/* pf_rule->timeout is smaller than pf_krule->timeout */
+	bcopy(rule->timeout, krule->timeout, sizeof(rule->timeout));
 	krule->max_states = rule->max_states;
 	krule->max_src_nodes = rule->max_src_nodes;
 	krule->max_src_states = rule->max_src_states;
@@ -2669,9 +2655,6 @@ pfioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flags, struct thread *td
 
 		/* Copy the request in */
 		packed = malloc(nv->len, M_NVLIST, M_WAITOK);
-		if (packed == NULL)
-			ERROUT(ENOMEM);
-
 		error = copyin(nv->data, packed, nv->len);
 		if (error)
 			ERROUT(error);
@@ -2749,9 +2732,6 @@ DIOCGETETHRULES_error:
 			ERROUT(ENOMEM);
 
 		nvlpacked = malloc(nv->len, M_NVLIST, M_WAITOK);
-		if (nvlpacked == NULL)
-			ERROUT(ENOMEM);
-
 		error = copyin(nv->data, nvlpacked, nv->len);
 		if (error)
 			ERROUT(error);
@@ -2849,9 +2829,6 @@ DIOCGETETHRULE_error:
 			ERROUT(ENOMEM);
 
 		nvlpacked = malloc(nv->len, M_NVLIST, M_WAITOK);
-		if (nvlpacked == NULL)
-			ERROUT(ENOMEM);
-
 		error = copyin(nv->data, nvlpacked, nv->len);
 		if (error)
 			ERROUT(error);
@@ -2882,8 +2859,6 @@ DIOCGETETHRULE_error:
 		}
 
 		rule = malloc(sizeof(*rule), M_PFRULE, M_WAITOK);
-		if (rule == NULL)
-			ERROUT(ENOMEM);
 		rule->timestamp = NULL;
 
 		error = pf_nveth_rule_to_keth_rule(nvl, rule);
@@ -2982,9 +2957,6 @@ DIOCADDETHRULE_error:
 			ERROUT(ENOMEM);
 
 		nvlpacked = malloc(nv->len, M_NVLIST, M_WAITOK);
-		if (nvlpacked == NULL)
-			ERROUT(ENOMEM);
-
 		error = copyin(nv->data, nvlpacked, nv->len);
 		if (error)
 			ERROUT(error);
@@ -3060,9 +3032,6 @@ DIOCGETETHRULESETS_error:
 			ERROUT(ENOMEM);
 
 		nvlpacked = malloc(nv->len, M_NVLIST, M_WAITOK);
-		if (nvlpacked == NULL)
-			ERROUT(ENOMEM);
-
 		error = copyin(nv->data, nvlpacked, nv->len);
 		if (error)
 			ERROUT(error);
@@ -3332,9 +3301,6 @@ DIOCADDRULENV_error:
 
 		/* Copy the request in */
 		nvlpacked = malloc(nv->len, M_NVLIST, M_WAITOK);
-		if (nvlpacked == NULL)
-			ERROUT(ENOMEM);
-
 		error = copyin(nv->data, nvlpacked, nv->len);
 		if (error)
 			ERROUT(error);
@@ -3793,7 +3759,7 @@ DIOCCHANGERULE_error:
 		    sizeof(struct pfsync_state_1301), M_TEMP, M_WAITOK | M_ZERO);
 		nr = 0;
 
-		for (i = 0; i <= pf_hashmask; i++) {
+		for (i = 0; i <= V_pf_hashmask; i++) {
 			struct pf_idhash *ih = &V_pf_idhash[i];
 
 DIOCGETSTATES_retry:
@@ -3872,7 +3838,7 @@ DIOCGETSTATES_full:
 		    sizeof(struct pf_state_export), M_TEMP, M_WAITOK | M_ZERO);
 		nr = 0;
 
-		for (i = 0; i <= pf_hashmask; i++) {
+		for (i = 0; i <= V_pf_hashmask; i++) {
 			struct pf_idhash *ih = &V_pf_idhash[i];
 
 DIOCGETSTATESV2_retry:
@@ -5221,8 +5187,6 @@ DIOCCHANGEADDR_error:
 			free(ioes, M_TEMP);
 			break;
 		}
-		/* Ensure there's no more ethernet rules to clean up. */
-		NET_EPOCH_DRAIN_CALLBACKS();
 		PF_RULES_WLOCK();
 		for (i = 0, ioe = ioes; i < io->size; i++, ioe++) {
 			ioe->anchor[sizeof(ioe->anchor) - 1] = '\0';
@@ -5515,7 +5479,7 @@ DIOCCHANGEADDR_error:
 		struct pf_src_node	*p, *pstore;
 		uint32_t		 i, nr = 0;
 
-		for (i = 0, sh = V_pf_srchash; i <= pf_srchashmask;
+		for (i = 0, sh = V_pf_srchash; i <= V_pf_srchashmask;
 				i++, sh++) {
 			PF_HASHROW_LOCK(sh);
 			LIST_FOREACH(n, &sh->nodes, entry)
@@ -5534,7 +5498,7 @@ DIOCCHANGEADDR_error:
 		nr = 0;
 
 		p = pstore = malloc(psn->psn_len, M_TEMP, M_WAITOK | M_ZERO);
-		for (i = 0, sh = V_pf_srchash; i <= pf_srchashmask;
+		for (i = 0, sh = V_pf_srchash; i <= V_pf_srchashmask;
 		    i++, sh++) {
 		    PF_HASHROW_LOCK(sh);
 		    LIST_FOREACH(n, &sh->nodes, entry) {
@@ -6006,7 +5970,7 @@ pf_clear_all_states(void)
 	struct pf_kstate	*s;
 	u_int i;
 
-	for (i = 0; i <= pf_hashmask; i++) {
+	for (i = 0; i <= V_pf_hashmask; i++) {
 		struct pf_idhash *ih = &V_pf_idhash[i];
 relock:
 		PF_HASHROW_LOCK(ih);
@@ -6042,7 +6006,7 @@ pf_clear_srcnodes(struct pf_ksrc_node *n)
 	struct pf_kstate *s;
 	int i;
 
-	for (i = 0; i <= pf_hashmask; i++) {
+	for (i = 0; i <= V_pf_hashmask; i++) {
 		struct pf_idhash *ih = &V_pf_idhash[i];
 
 		PF_HASHROW_LOCK(ih);
@@ -6058,7 +6022,7 @@ pf_clear_srcnodes(struct pf_ksrc_node *n)
 	if (n == NULL) {
 		struct pf_srchash *sh;
 
-		for (i = 0, sh = V_pf_srchash; i <= pf_srchashmask;
+		for (i = 0, sh = V_pf_srchash; i <= V_pf_srchashmask;
 		    i++, sh++) {
 			PF_HASHROW_LOCK(sh);
 			LIST_FOREACH(n, &sh->nodes, entry) {
@@ -6080,7 +6044,7 @@ pf_kill_srcnodes(struct pfioc_src_node_kill *psnk)
 	struct pf_ksrc_node_list	 kill;
 
 	LIST_INIT(&kill);
-	for (int i = 0; i <= pf_srchashmask; i++) {
+	for (int i = 0; i <= V_pf_srchashmask; i++) {
 		struct pf_srchash *sh = &V_pf_srchash[i];
 		struct pf_ksrc_node *sn, *tmp;
 
@@ -6101,7 +6065,7 @@ pf_kill_srcnodes(struct pfioc_src_node_kill *psnk)
 		PF_HASHROW_UNLOCK(sh);
 	}
 
-	for (int i = 0; i <= pf_hashmask; i++) {
+	for (int i = 0; i <= V_pf_hashmask; i++) {
 		struct pf_idhash *ih = &V_pf_idhash[i];
 		struct pf_kstate *s;
 
@@ -6131,9 +6095,6 @@ pf_keepcounters(struct pfioc_nv *nv)
 		ERROUT(ENOMEM);
 
 	nvlpacked = malloc(nv->len, M_NVLIST, M_WAITOK);
-	if (nvlpacked == NULL)
-		ERROUT(ENOMEM);
-
 	error = copyin(nv->data, nvlpacked, nv->len);
 	if (error)
 		ERROUT(error);
@@ -6162,7 +6123,7 @@ pf_clear_states(const struct pf_kstate_kill *kill)
 	int		 idx;
 	unsigned int	 killed = 0, dir;
 
-	for (unsigned int i = 0; i <= pf_hashmask; i++) {
+	for (unsigned int i = 0; i <= V_pf_hashmask; i++) {
 		struct pf_idhash *ih = &V_pf_idhash[i];
 
 relock_DIOCCLRSTATES:
@@ -6236,7 +6197,7 @@ pf_killstates(struct pf_kstate_kill *kill, unsigned int *killed)
 		return;
 	}
 
-	for (unsigned int i = 0; i <= pf_hashmask; i++)
+	for (unsigned int i = 0; i <= V_pf_hashmask; i++)
 		*killed += pf_killstates_row(kill, &V_pf_idhash[i]);
 
 	return;
@@ -6257,9 +6218,6 @@ pf_killstates_nv(struct pfioc_nv *nv)
 		ERROUT(ENOMEM);
 
 	nvlpacked = malloc(nv->len, M_NVLIST, M_WAITOK);
-	if (nvlpacked == NULL)
-		ERROUT(ENOMEM);
-
 	error = copyin(nv->data, nvlpacked, nv->len);
 	if (error)
 		ERROUT(error);
@@ -6315,9 +6273,6 @@ pf_clearstates_nv(struct pfioc_nv *nv)
 		ERROUT(ENOMEM);
 
 	nvlpacked = malloc(nv->len, M_NVLIST, M_WAITOK);
-	if (nvlpacked == NULL)
-		ERROUT(ENOMEM);
-
 	error = copyin(nv->data, nvlpacked, nv->len);
 	if (error)
 		ERROUT(error);
@@ -6374,9 +6329,6 @@ pf_getstate(struct pfioc_nv *nv)
 		ERROUT(ENOMEM);
 
 	nvlpacked = malloc(nv->len, M_NVLIST, M_WAITOK);
-	if (nvlpacked == NULL)
-		ERROUT(ENOMEM);
-
 	error = copyin(nv->data, nvlpacked, nv->len);
 	if (error)
 		ERROUT(error);
@@ -6876,9 +6828,6 @@ pf_unload_vnet(void)
 	pf_syncookies_cleanup();
 	shutdown_pf();
 	PF_RULES_WUNLOCK();
-
-	/* Make sure we've cleaned up ethernet rules before we continue. */
-	NET_EPOCH_DRAIN_CALLBACKS();
 
 	ret = swi_remove(V_pf_swi_cookie);
 	MPASS(ret == 0);

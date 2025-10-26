@@ -479,8 +479,10 @@ eqos_fdt_init(device_t dev)
 	hwreset_t eqos_reset;
 	regulator_t eqos_supply;
 	uint32_t rx_delay, tx_delay;
-
 	uint8_t buffer[16];
+	clk_t stmmaceth, mac_clk_rx, mac_clk_tx, aclk_mac, pclk_mac;
+	uint64_t freq;
+
 	const char *temp_name;
 	char *clock_in_out;
 	int i, error, n_clocks;
@@ -549,8 +551,56 @@ eqos_fdt_init(device_t dev)
 		device_printf(dev, "cannot get reset\n");
 		return (ENXIO);
 	}
-	else
-		hwreset_assert(eqos_reset);
+	hwreset_assert(eqos_reset);
+
+	error = clk_set_assigned(dev, ofw_bus_get_node(dev));
+	if (error != 0) {
+		device_printf(dev, "clk_set_assigned failed\n");
+		return (error);
+	}
+
+	if (clk_get_by_ofw_name(dev, 0, "stmmaceth", &stmmaceth) == 0) {
+		error = clk_enable(stmmaceth);
+		if (error != 0) {
+			device_printf(dev, "could not enable main clock\n");
+			return (error);
+		}
+		if (bootverbose) {
+			clk_get_freq(stmmaceth, &freq);
+			device_printf(dev, "MAC clock(%s) freq: %jd\n",
+					clk_get_name(stmmaceth), (intmax_t)freq);
+		}
+	}
+	else {
+		device_printf(dev, "could not find clock stmmaceth\n");
+	}
+
+	if (clk_get_by_ofw_name(dev, 0, "mac_clk_rx", &mac_clk_rx) != 0) {
+		device_printf(dev, "could not get mac_clk_rx clock\n");
+		mac_clk_rx = NULL;
+	}
+
+	if (clk_get_by_ofw_name(dev, 0, "mac_clk_tx", &mac_clk_tx) != 0) {
+		device_printf(dev, "could not get mac_clk_tx clock\n");
+		mac_clk_tx = NULL;
+	}
+
+	if (clk_get_by_ofw_name(dev, 0, "aclk_mac", &aclk_mac) != 0) {
+		device_printf(dev, "could not get aclk_mac clock\n");
+		aclk_mac = NULL;
+	}
+
+	if (clk_get_by_ofw_name(dev, 0, "pclk_mac", &pclk_mac) != 0) {
+		device_printf(dev, "could not get pclk_mac clock\n");
+		pclk_mac = NULL;
+	}
+
+	if (aclk_mac)
+		clk_enable(aclk_mac);
+	if (pclk_mac)
+		clk_enable(pclk_mac);
+	if (mac_clk_tx)
+		clk_enable(mac_clk_tx);
 
 	if (OF_hasprop(node, "snps,force_thresh_dma_mode")) {
 		sc->force_thresh_dma_mode = 1;

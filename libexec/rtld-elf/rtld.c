@@ -253,11 +253,14 @@ int dladdr(const void *, Dl_info *) __exported;
 void dllockinit(void *, void *(*)(void *), void (*)(void *), void (*)(void *),
     void (*)(void *), void (*)(void *), void (*)(void *)) __exported;
 int dlinfo(void *, int , void *) __exported;
+int _dl_iterate_phdr_locked(__dl_iterate_hdr_callback, void *) __exported;
 int dl_iterate_phdr(__dl_iterate_hdr_callback, void *) __exported;
 int _rtld_addr_phdr(const void *, struct dl_phdr_info *) __exported;
 int _rtld_get_stack_prot(void) __exported;
 int _rtld_is_dlopened(void *) __exported;
 void _rtld_error(const char *, ...) __exported;
+const char *rtld_get_var(const char *name) __exported;
+int rtld_set_var(const char *name, const char *val) __exported;
 
 /* Only here to fix -Wmissing-prototypes warnings */
 int __getosreldate(void);
@@ -332,79 +335,61 @@ ld_utrace_log(int event, void *handle, void *mapbase, size_t mapsize,
 	struct utrace_rtld ut;
 	static const char rtld_utrace_sig[RTLD_UTRACE_SIG_SZ] = RTLD_UTRACE_SIG;
 
+	memset(&ut, 0, sizeof(ut));	/* clear holes */
 	memcpy(ut.sig, rtld_utrace_sig, sizeof(ut.sig));
 	ut.event = event;
 	ut.handle = handle;
 	ut.mapbase = mapbase;
 	ut.mapsize = mapsize;
 	ut.refcnt = refcnt;
-	bzero(ut.name, sizeof(ut.name));
-	if (name)
+	if (name != NULL)
 		strlcpy(ut.name, name, sizeof(ut.name));
 	utrace(&ut, sizeof(ut));
 }
 
-enum {
-	LD_BIND_NOW = 0,
-	LD_PRELOAD,
-	LD_LIBMAP,
-	LD_LIBRARY_PATH,
-	LD_LIBRARY_PATH_FDS,
-	LD_LIBMAP_DISABLE,
-	LD_BIND_NOT,
-	LD_DEBUG,
-	LD_ELF_HINTS_PATH,
-	LD_LOADFLTR,
-	LD_LIBRARY_PATH_RPATH,
-	LD_PRELOAD_FDS,
-	LD_DYNAMIC_WEAK,
-	LD_TRACE_LOADED_OBJECTS,
-	LD_UTRACE,
-	LD_DUMP_REL_PRE,
-	LD_DUMP_REL_POST,
-	LD_TRACE_LOADED_OBJECTS_PROGNAME,
-	LD_TRACE_LOADED_OBJECTS_FMT1,
-	LD_TRACE_LOADED_OBJECTS_FMT2,
-	LD_TRACE_LOADED_OBJECTS_ALL,
-	LD_SHOW_AUXV,
-	LD_STATIC_TLS_EXTRA,
-};
-
 struct ld_env_var_desc {
 	const char * const n;
 	const char *val;
-	const bool unsecure;
+	const bool unsecure:1;
+	const bool can_update:1;
+	const bool debug:1;
+	bool owned:1;
 };
-#define LD_ENV_DESC(var, unsec) \
-    [LD_##var] = { .n = #var, .unsecure = unsec }
+#define LD_ENV_DESC(var, unsec, ...)		\
+	[LD_##var] = {				\
+	    .n = #var,				\
+	    .unsecure = unsec,			\
+	    __VA_ARGS__				\
+	}
 
 static struct ld_env_var_desc ld_env_vars[] = {
 	LD_ENV_DESC(BIND_NOW, false),
 	LD_ENV_DESC(PRELOAD, true),
 	LD_ENV_DESC(LIBMAP, true),
-	LD_ENV_DESC(LIBRARY_PATH, true),
-	LD_ENV_DESC(LIBRARY_PATH_FDS, true),
+	LD_ENV_DESC(LIBRARY_PATH, true, .can_update = true),
+	LD_ENV_DESC(LIBRARY_PATH_FDS, true, .can_update = true),
 	LD_ENV_DESC(LIBMAP_DISABLE, true),
 	LD_ENV_DESC(BIND_NOT, true),
-	LD_ENV_DESC(DEBUG, true),
+	LD_ENV_DESC(DEBUG, true, .can_update = true, .debug = true),
 	LD_ENV_DESC(ELF_HINTS_PATH, true),
 	LD_ENV_DESC(LOADFLTR, true),
-	LD_ENV_DESC(LIBRARY_PATH_RPATH, true),
+	LD_ENV_DESC(LIBRARY_PATH_RPATH, true, .can_update = true),
 	LD_ENV_DESC(PRELOAD_FDS, true),
-	LD_ENV_DESC(DYNAMIC_WEAK, true),
+	LD_ENV_DESC(DYNAMIC_WEAK, true, .can_update = true),
 	LD_ENV_DESC(TRACE_LOADED_OBJECTS, false),
-	LD_ENV_DESC(UTRACE, false),
-	LD_ENV_DESC(DUMP_REL_PRE, false),
-	LD_ENV_DESC(DUMP_REL_POST, false),
+	LD_ENV_DESC(UTRACE, false, .can_update = true),
+	LD_ENV_DESC(DUMP_REL_PRE, false, .can_update = true),
+	LD_ENV_DESC(DUMP_REL_POST, false, .can_update = true),
 	LD_ENV_DESC(TRACE_LOADED_OBJECTS_PROGNAME, false),
 	LD_ENV_DESC(TRACE_LOADED_OBJECTS_FMT1, false),
 	LD_ENV_DESC(TRACE_LOADED_OBJECTS_FMT2, false),
 	LD_ENV_DESC(TRACE_LOADED_OBJECTS_ALL, false),
 	LD_ENV_DESC(SHOW_AUXV, false),
 	LD_ENV_DESC(STATIC_TLS_EXTRA, false),
+	LD_ENV_DESC(NO_DL_ITERATE_PHDR_AFTER_FORK, false),
 };
 
-static const char *
+const char *
 ld_get_env_var(int idx)
 {
 	return (ld_env_vars[idx].val);
@@ -2419,11 +2404,6 @@ init_rtld(caddr_t mapbase, Elf_Auxinfo **aux_info)
     const Elf_Dyn *dyn_soname;
     const Elf_Dyn *dyn_runpath;
 
-#ifdef RTLD_INIT_PAGESIZES_EARLY
-    /* The page size is required by the dynamic memory allocator. */
-    init_pagesizes(aux_info);
-#endif
-
     /*
      * Conjure up an Obj_Entry structure for the dynamic linker.
      *
@@ -2458,10 +2438,8 @@ init_rtld(caddr_t mapbase, Elf_Auxinfo **aux_info)
     /* Now that non-local variables can be accesses, copy out obj_rtld. */
     memcpy(&obj_rtld, &objtmp, sizeof(obj_rtld));
 
-#ifndef RTLD_INIT_PAGESIZES_EARLY
     /* The page size is required by the dynamic memory allocator. */
     init_pagesizes(aux_info);
-#endif
 
     if (aux_info[AT_OSRELDATE] != NULL)
 	    osreldate = aux_info[AT_OSRELDATE]->a_un.a_val;
@@ -4224,6 +4202,29 @@ rtld_fill_dl_phdr_info(const Obj_Entry *obj, struct dl_phdr_info *phdr_info)
 	phdr_info->dlpi_subs = obj_loads - obj_count;
 }
 
+/*
+ * It's completely UB to actually use this, so extreme caution is advised.  It's
+ * probably not what you want.
+ */
+int
+_dl_iterate_phdr_locked(__dl_iterate_hdr_callback callback, void *param)
+{
+	struct dl_phdr_info phdr_info;
+	Obj_Entry *obj;
+	int error;
+
+	for (obj = globallist_curr(TAILQ_FIRST(&obj_list)); obj != NULL;
+	    obj = globallist_next(obj)) {
+		rtld_fill_dl_phdr_info(obj, &phdr_info);
+		error = callback(&phdr_info, sizeof(phdr_info), param);
+		if (error != 0)
+			return (error);
+	}
+
+	rtld_fill_dl_phdr_info(&obj_rtld, &phdr_info);
+	return (callback(&phdr_info, sizeof(phdr_info), param));
+}
+
 int
 dl_iterate_phdr(__dl_iterate_hdr_callback callback, void *param)
 {
@@ -4623,12 +4624,13 @@ symlook_default(SymLook *req, const Obj_Entry *refobj)
      */
     res = symlook_obj(&req1, refobj);
     if (res == 0 && (refobj->symbolic ||
-      ELF_ST_VISIBILITY(req1.sym_out->st_other) == STV_PROTECTED)) {
+      ELF_ST_VISIBILITY(req1.sym_out->st_other) == STV_PROTECTED ||
+      refobj->deepbind)) {
 	req->sym_out = req1.sym_out;
 	req->defobj_out = req1.defobj_out;
 	assert(req->defobj_out != NULL);
     }
-    if (refobj->symbolic || req->defobj_out != NULL)
+    if (refobj->symbolic || req->defobj_out != NULL || refobj->deepbind)
 	donelist_check(&donelist, refobj);
 
     if (!refobj->deepbind)
@@ -5318,7 +5320,7 @@ allocate_tls(Obj_Entry *objs, void *oldtcb, size_t tcbsize, size_t tcbalign)
     maxalign = MAX(tcbalign, tls_static_max_align);
     tls_init_align = MAX(obj_main->tlsalign, 1);
 
-    /* Compute fragmets sizes. */
+    /* Compute fragments sizes. */
     extra_size = tcbsize - TLS_TCB_SIZE;
     post_size = calculate_tls_post_size(tls_init_align);
     tls_block_size = tcbsize + post_size;
@@ -6155,10 +6157,42 @@ parse_args(char* argv[], int argc, bool *use_pathp, int *fdp,
 				*fdp = fd;
 				seen_f = true;
 				break;
+			} else if (opt == 'o') {
+				struct ld_env_var_desc *l;
+				char *n, *v;
+				u_int ll;
+
+				if (j != arglen - 1) {
+					_rtld_error("Invalid options: %s", arg);
+					rtld_die();
+				}
+				i++;
+				n = argv[i];
+				v = strchr(n, '=');
+				if (v == NULL) {
+					_rtld_error("No '=' in -o parameter");
+					rtld_die();
+				}
+				for (ll = 0; ll < nitems(ld_env_vars); ll++) {
+					l = &ld_env_vars[ll];
+					if (v - n == (ptrdiff_t)strlen(l->n) &&
+					    strncmp(n, l->n, v - n) == 0) {
+						l->val = v + 1;
+						break;
+					}
+				}
+				if (ll == nitems(ld_env_vars)) {
+					_rtld_error("Unknown LD_ option %s",
+					    n);
+					rtld_die();
+				}
 			} else if (opt == 'p') {
 				*use_pathp = true;
 			} else if (opt == 'u') {
-				trust = false;
+				u_int ll;
+
+				for (ll = 0; ll < nitems(ld_env_vars); ll++)
+					ld_env_vars[ll].val = NULL;
 			} else if (opt == 'v') {
 				machine[0] = '\0';
 				mib[0] = CTL_HW;
@@ -6238,6 +6272,7 @@ print_usage(const char *argv0)
 	    "  -b <exe>  Execute <exe> instead of <binary>, arg0 is <binary>\n"
 	    "  -d        Ignore lack of exec permissions for the binary\n"
 	    "  -f <FD>   Execute <FD> instead of searching for <binary>\n"
+	    "  -o <OPT>=<VAL> Set LD_<OPT> to <VAL>, without polluting env\n"
 	    "  -p        Search in PATH for named binary\n"
 	    "  -u        Ignore LD_ environment variables\n"
 	    "  -v        Display identification information\n"
@@ -6323,6 +6358,46 @@ dump_auxv(Elf_Auxinfo **aux_info)
 		}
 		rtld_fdprintf(STDOUT_FILENO, "\n");
 	}
+}
+
+const char *
+rtld_get_var(const char *name)
+{
+	const struct ld_env_var_desc *lvd;
+	u_int i;
+
+	for (i = 0; i < nitems(ld_env_vars); i++) {
+		lvd = &ld_env_vars[i];
+		if (strcmp(lvd->n, name) == 0)
+			return (lvd->val);
+	}
+	return (NULL);
+}
+
+int
+rtld_set_var(const char *name, const char *val)
+{
+	struct ld_env_var_desc *lvd;
+	u_int i;
+
+	for (i = 0; i < nitems(ld_env_vars); i++) {
+		lvd = &ld_env_vars[i];
+		if (strcmp(lvd->n, name) != 0)
+			continue;
+		if (!lvd->can_update || (lvd->unsecure && !trust))
+			return (EPERM);
+		if (lvd->owned)
+			free(__DECONST(char *, lvd->val));
+		if (val != NULL)
+			lvd->val = xstrdup(val);
+		else
+			lvd->val = NULL;
+		lvd->owned = true;
+		if (lvd->debug)
+			debug = lvd->val != NULL && *lvd->val != '\0';
+		return (0);
+	}
+	return (ENOENT);
 }
 
 /*

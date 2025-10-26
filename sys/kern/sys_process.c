@@ -37,6 +37,7 @@
 #include <sys/ktr.h>
 #include <sys/limits.h>
 #include <sys/lock.h>
+#include <sys/mman.h>
 #include <sys/mutex.h>
 #include <sys/reg.h>
 #include <sys/syscallsubr.h>
@@ -366,7 +367,7 @@ proc_rwmem(struct proc *p, struct uio *uio)
 	/*
 	 * If we are writing, then we request vm_fault() to create a private
 	 * copy of each page.  Since these copies will not be writeable by the
-	 * process, we must explicity request that they be dirtied.
+	 * process, we must explicitly request that they be dirtied.
 	 */
 	writing = uio->uio_rw == UIO_WRITE;
 	reqprot = writing ? VM_PROT_COPY | VM_PROT_READ : VM_PROT_READ;
@@ -392,7 +393,7 @@ proc_rwmem(struct proc *p, struct uio *uio)
 		/*
 		 * How many bytes to copy
 		 */
-		len = min(PAGE_SIZE - page_offset, uio->uio_resid);
+		len = MIN(PAGE_SIZE - page_offset, uio->uio_resid);
 
 		/*
 		 * Fault and hold the page on behalf of the process.
@@ -517,7 +518,8 @@ ptrace_vm_entry(struct thread *td, struct proc *p, struct ptrace_vm_entry *pve)
 		pve->pve_start = entry->start;
 		pve->pve_end = entry->end - 1;
 		pve->pve_offset = entry->offset;
-		pve->pve_prot = entry->protection;
+		pve->pve_prot = entry->protection |
+		    PROT_MAX(entry->max_protection);
 
 		/* Backing object's path needed? */
 		if (pve->pve_pathlen == 0)
@@ -1172,7 +1174,8 @@ kern_ptrace(struct thread *td, int req, pid_t pid, void *addr, int data)
 
 	case PT_GET_SC_ARGS:
 		CTR1(KTR_PTRACE, "PT_GET_SC_ARGS: pid %d", p->p_pid);
-		if ((td2->td_dbgflags & (TDB_SCE | TDB_SCX)) == 0
+		if (((td2->td_dbgflags & (TDB_SCE | TDB_SCX)) == 0 &&
+		     td2->td_sa.code == 0)
 #ifdef COMPAT_FREEBSD32
 		    || (wrap32 && !safe)
 #endif
@@ -1385,6 +1388,10 @@ kern_ptrace(struct thread *td, int req, pid_t pid, void *addr, int data)
 
 	case PT_IO:
 		piod = addr;
+		if (piod->piod_len > SSIZE_MAX) {
+			error = EINVAL;
+			goto out;
+		}
 		iov.iov_base = piod->piod_addr;
 		iov.iov_len = piod->piod_len;
 		uio.uio_offset = (off_t)(uintptr_t)piod->piod_offs;
@@ -1515,12 +1522,9 @@ kern_ptrace(struct thread *td, int req, pid_t pid, void *addr, int data)
 		pl->pl_sigmask = td2->td_sigmask;
 		pl->pl_siglist = td2->td_siglist;
 		strcpy(pl->pl_tdname, td2->td_name);
-		if ((td2->td_dbgflags & (TDB_SCE | TDB_SCX)) != 0) {
+		if (td2->td_sa.code != 0) {
 			pl->pl_syscall_code = td2->td_sa.code;
 			pl->pl_syscall_narg = td2->td_sa.callp->sy_narg;
-		} else {
-			pl->pl_syscall_code = 0;
-			pl->pl_syscall_narg = 0;
 		}
 		CTR6(KTR_PTRACE,
     "PT_LWPINFO: tid %d (pid %d) event %d flags %#x child pid %d syscall %d",

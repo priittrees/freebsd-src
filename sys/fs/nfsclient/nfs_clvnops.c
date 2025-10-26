@@ -940,7 +940,7 @@ nfs_close(struct vop_close_args *ap)
 		/*
 		 * Get attributes so "change" is up to date.
 		 */
-		if (error == 0 && nfscl_mustflush(vp) != 0 &&
+		if (error == 0 && nfscl_nodeleg(vp, 0) != 0 &&
 		    vp->v_type == VREG &&
 		    (VFSTONFS(vp->v_mount)->nm_flag & NFSMNT_NOCTO) == 0) {
 			ret = nfsrpc_getattr(vp, cred, ap->a_td, &nfsva);
@@ -1120,7 +1120,7 @@ nfs_setattr(struct vop_setattr_args *ap)
 			     * Call nfscl_delegmodtime() to set the modify time
 			     * locally, as required.
 			     */
-			    nfscl_delegmodtime(vp);
+			    nfscl_delegmodtime(vp, NULL);
  			} else
 			    NFSUNLOCKNODE(np);
 			/*
@@ -1158,6 +1158,8 @@ nfs_setattr(struct vop_setattr_args *ap)
 			NFSUNLOCKNODE(np);
 		}
 	}
+	if (vap->va_mtime.tv_sec != VNOVAL && error == 0)
+		nfscl_delegmodtime(vp, &vap->va_mtime);
 	return (error);
 }
 
@@ -1309,6 +1311,11 @@ nfs_lookup(struct vop_lookup_args *ap)
 	}
 
 	openmode = 0;
+#if 0
+	/*
+	 * The use of LookupOpen breaks some builds.  It is disabled
+	 * until that is fixed.
+	 */
 	/*
 	 * If this an NFSv4.1/4.2 mount using the "oneopenown" mount
 	 * option, it is possible to do the Open operation in the same
@@ -1328,6 +1335,7 @@ nfs_lookup(struct vop_lookup_args *ap)
 			openmode |= NFSV4OPEN_ACCESSWRITE;
 	}
 	NFSUNLOCKMNT(nmp);
+#endif
 
 	newvp = NULLVP;
 	NFSINCRGLOBAL(nfsstatsv1.lookupcache_misses);

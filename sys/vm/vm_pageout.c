@@ -185,8 +185,23 @@ SYSCTL_INT(_vm, OID_AUTO, pageout_oom_seq,
     "back-to-back calls to oom detector to start OOM");
 
 static int act_scan_laundry_weight = 3;
-SYSCTL_INT(_vm, OID_AUTO, act_scan_laundry_weight, CTLFLAG_RWTUN,
-    &act_scan_laundry_weight, 0,
+
+static int
+sysctl_act_scan_laundry_weight(SYSCTL_HANDLER_ARGS)
+{
+	int error, newval;
+
+	newval = act_scan_laundry_weight;
+	error = sysctl_handle_int(oidp, &newval, 0, req);
+	if (error || req->newptr == NULL)
+		return (error);
+	if (newval < 1)
+		return (EINVAL);
+	act_scan_laundry_weight = newval;
+	return (0);
+}
+SYSCTL_PROC(_vm, OID_AUTO, act_scan_laundry_weight, CTLFLAG_RWTUN | CTLTYPE_INT,
+    &act_scan_laundry_weight, 0, sysctl_act_scan_laundry_weight, "I",
     "weight given to clean vs. dirty pages in active queue scans");
 
 static u_int vm_background_launder_rate = 4096;
@@ -1657,8 +1672,9 @@ vm_pageout_inactive_dispatch(struct vm_domain *vmd, int shortage)
 	 * If we have more work than we can do in a quarter of our interval, we
 	 * fire off multiple threads to process it.
 	 */
-	threads = vmd->vmd_inactive_threads;
-	if (threads > 1 && vmd->vmd_inactive_pps != 0 &&
+	if ((threads = vmd->vmd_inactive_threads) > 1 &&
+	    vmd->vmd_helper_threads_enabled &&
+	    vmd->vmd_inactive_pps != 0 &&
 	    shortage > vmd->vmd_inactive_pps / VM_INACT_SCAN_RATE / 4) {
 		vmd->vmd_inactive_shortage /= threads;
 		slop = shortage % threads;
@@ -1798,7 +1814,7 @@ vm_pageout_mightbe_oom(struct vm_domain *vmd, int page_shortage,
 		vmd->vmd_oom_seq++;
 	if (vmd->vmd_oom_seq < vm_pageout_oom_seq) {
 		if (vmd->vmd_oom) {
-			vmd->vmd_oom = FALSE;
+			vmd->vmd_oom = false;
 			atomic_subtract_int(&vm_pageout_oom_vote, 1);
 		}
 		return;
@@ -1813,7 +1829,7 @@ vm_pageout_mightbe_oom(struct vm_domain *vmd, int page_shortage,
 	if (vmd->vmd_oom)
 		return;
 
-	vmd->vmd_oom = TRUE;
+	vmd->vmd_oom = true;
 	old_vote = atomic_fetchadd_int(&vm_pageout_oom_vote, 1);
 	if (old_vote != vm_ndomains - 1)
 		return;
@@ -1831,7 +1847,7 @@ vm_pageout_mightbe_oom(struct vm_domain *vmd, int page_shortage,
 	 * memory condition is still there, due to vmd_oom being
 	 * false.
 	 */
-	vmd->vmd_oom = FALSE;
+	vmd->vmd_oom = false;
 	atomic_subtract_int(&vm_pageout_oom_vote, 1);
 }
 
@@ -2295,6 +2311,10 @@ vm_pageout_init_domain(int domain)
 	pidctrl_init_sysctl(&vmd->vmd_pid, SYSCTL_CHILDREN(oid));
 
 	vmd->vmd_inactive_threads = get_pageout_threads_per_domain(vmd);
+	SYSCTL_ADD_BOOL(NULL, SYSCTL_CHILDREN(vmd->vmd_oid), OID_AUTO,
+	    "pageout_helper_threads_enabled", CTLFLAG_RWTUN,
+	    &vmd->vmd_helper_threads_enabled, 0,
+	    "Enable multi-threaded inactive queue scanning");
 }
 
 static void
