@@ -4,6 +4,11 @@ options         SOC_MEDIATEK
 # Uart
 device		uart_ns8250
 
+# MMC/SD/SDIO Card slot support
+device		sdhci		# SD controller
+device		mmc		# mmc/sd bus
+device		mmcsd		# mmc/sd flash cards
+
 options         FDT
 # DTBs
 makeoptions     MODULES_EXTRA+="dtb/mediatek"
