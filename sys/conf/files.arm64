@@ -787,4 +787,7 @@ dev/clk/xilinx/zynqmp_reset.c			optional fdt soc_xilinx_zynq
 arm64/mediatek/uart_dev_mtk_ns8250.c		optional fdt soc_mediatek
 arm64/mediatek/mtk_sys_cirq.c			optional fdt soc_mediatek
 arm64/mediatek/mtk_mmc.c			optional mmc fdt soc_mediatek
+# Ralink/Mediatek Ethernet driver
 arm64/mediatek/if_rt.c				optional rt fdt soc_mediatek
+dev/etherswitch/mtkswitch/mtkswitch.c		optional mtkswitch fdt
+dev/etherswitch/mtkswitch/mtkswitch_mt7531.c	optional mtkswitch fdt

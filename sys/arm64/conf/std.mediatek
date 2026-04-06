@@ -5,9 +5,15 @@ options         SOC_MEDIATEK
 device		uart_ns8250
 
  # Ethernet, BPF and bridge support
+device		miibus
+device		mdio
 device          rt
 device          bpf
 device          if_bridge
+
+# Ethernet switch
+device         etherswitch             # Enable etherswitch support
+device         mtkswitch
 
 # MMC/SD/SDIO Card slot support
 device		sdhci		# SD controller
