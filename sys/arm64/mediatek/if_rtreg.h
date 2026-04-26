@@ -66,26 +66,19 @@
 #define RT_GDM_MAC_MSB(gmac)  (RT_GDM_BASE(gmac) + 0x0c)
 
 #define RT5350_PDMA_BASE 0x0800
+#define MT7986_PDMA_BASE 0x4000
 
-#define        RT5350_TX_BASE_PTR(qid)			\
-	((qid) * 0x10 + RT5350_PDMA_BASE + 0x000)
-#define        RT5350_TX_MAX_CNT(qid)			\
-	((qid) * 0x10 + RT5350_PDMA_BASE + 0x004)
-#define        RT5350_TX_CTX_IDX(qid)			\
-	((qid) * 0x10 + RT5350_PDMA_BASE + 0x008)
-#define        RT5350_TX_DTX_IDX(qid)			\
-	((qid) * 0x10 + RT5350_PDMA_BASE + 0x00C)
+#define        RT5350_TX_BASE_PTR(qid)         ((qid) * 0x10 + 0x000)
+#define        RT5350_TX_MAX_CNT(qid)          ((qid) * 0x10 + 0x004)
+#define        RT5350_TX_CTX_IDX(qid)          ((qid) * 0x10 + 0x008)
+#define        RT5350_TX_DTX_IDX(qid)          ((qid) * 0x10 + 0x00C)
+#define        RT5350_RX_BASE_PTR(qid)         ((qid) * 0x10 + 0x100)
+#define        RT5350_RX_MAX_CNT(qid)          ((qid) * 0x10 + 0x104)
+#define        RT5350_RX_CALC_IDX(qid)         ((qid) * 0x10 + 0x108)
+#define        RT5350_RX_DRX_IDX(qid)          ((qid) * 0x10 + 0x10C)
 
-#define        RT5350_RX_BASE_PTR(qid)			\
-	((qid) * 0x10 + RT5350_PDMA_BASE + 0x100)
-#define        RT5350_RX_MAX_CNT(qid)			\
-	((qid) * 0x10 + RT5350_PDMA_BASE + 0x104)
-#define        RT5350_RX_CALC_IDX(qid)			\
-	((qid) * 0x10 + RT5350_PDMA_BASE + 0x108)
-#define        RT5350_RX_DRX_IDX(qid)			\
-	((qid) * 0x10 + RT5350_PDMA_BASE + 0x10C)
 
-#define RT5350_PDMA_GLO_CFG	(RT5350_PDMA_BASE + 0x204)
+#define RT5350_PDMA_GLO_CFG	0x204
 #define	    FE_RX_2B_OFFSET	(1<<31)
 #define	    FE_TX_WB_DDONE	(1<<6)
 #define	    FE_DMA_BT_SIZE4	(0<<4)
@@ -96,7 +89,7 @@
 #define	    FE_TX_DMA_BUSY	(1<<1)
 #define	    FE_TX_DMA_EN	(1<<0)
 
-#define RT5350_PDMA_RST_IDX 	(RT5350_PDMA_BASE + 0x208)
+#define RT5350_PDMA_RST_IDX 	0x208
 #define	    FE_RST_DRX_IDX1	(1<<17)
 #define	    FE_RST_DRX_IDX0	(1<<16)
 #define	    FE_RST_DTX_IDX3	(1<<3)
@@ -104,7 +97,7 @@
 #define	    FE_RST_DTX_IDX1	(1<<1)
 #define	    FE_RST_DTX_IDX0	(1<<0)
 
-#define RT5350_DELAY_INT_CFG	(RT5350_PDMA_BASE + 0x20C)
+#define RT5350_DELAY_INT_CFG	0x20C
 #define	    TXDLY_INT_EN 	(1<<31)
 #define	    TXMAX_PINT_SHIFT	24
 #define	    TXMAX_PTIME_SHIFT	16
@@ -112,38 +105,44 @@
 #define	    RXMAX_PINT_SHIFT	8
 #define	    RXMAX_PTIME_SHIFT	0
 
-#define RT5350_PDMA_INT_STATUS    (RT5350_PDMA_BASE + 0x220)
+#define RT5350_PDMA_INT_STATUS    0x220
+#define	    MT7986_INT_RX_COHERENT      (1<<15)
+#define	    MT7986_RX_DLY_INT           (1<<14)
+#define	    MT7986_INT_TX_COHERENT      (1<<13)
+#define	    MT7986_TX_DLY_INT           (1<<14)
+
 #define	    RT5350_INT_RX_COHERENT      (1<<31)
 #define	    RT5350_RX_DLY_INT           (1<<30)
 #define	    RT5350_INT_TX_COHERENT      (1<<29)
 #define	    RT5350_TX_DLY_INT           (1<<28)
-#define	    RT5350_INT_RXQ3_DONE	       (1<<19)
+#define	    RT5350_INT_RXQ3_DONE	(1<<19)
 #define	    RT5350_INT_RXQ2_DONE        (1<<18)
-#define	    RT5350_INT_RXQ1_DONE	       (1<<17)
+#define	    RT5350_INT_RXQ1_DONE	(1<<17)
 #define	    RT5350_INT_RXQ0_DONE        (1<<16)
 #define	    RT5350_INT_TXQ3_DONE        (1<<3)
 #define	    RT5350_INT_TXQ2_DONE        (1<<2)
 #define	    RT5350_INT_TXQ1_DONE        (1<<1)
 #define	    RT5350_INT_TXQ0_DONE        (1<<0)
-#define RT5350_PDMA_INT_ENABLE	(RT5350_PDMA_BASE + 0x228)
-#define RT5350_PDMA_SCH_CFG0	(RT5350_PDMA_BASE + 0x280)
+#define RT5350_PDMA_INT_ENABLE	0x228
+#define RT5350_PDMA_SCH_CFG0	0x280
 
-#define	CNTR_BASE 0x2400
-#define CNTR_GDM(gmac)		(CNTR_BASE + (((gmac) == 0 ) ? 0x00 : 0x40))
-#define	    GDM_RX_GBCNT_LSB(gmac)	(CNTR_GDM(gmac) + 0x00)
-#define	    GDM_RX_GBCNT_MSB(gmac)	(CNTR_GDM(gmac) + 0x04)
-#define	    GDM_RX_GPCNT(gmac)		(CNTR_GDM(gmac) + 0x08)
-#define	    GDM_RX_OERCNT(gmac)		(CNTR_GDM(gmac) + 0x10)
-#define	    GDM_RX_FERCNT(gmac)		(CNTR_GDM(gmac) + 0x14)
-#define	    GDM_RX_SHORT_ERCNT(gmac) 	(CNTR_GDM(gmac) + 0x18)
-#define	    GDM_RX_LONG_ERCNT(gmac)	(CNTR_GDM(gmac) + 0x1C)
-#define	    GDM_RX_CSUM_ERCNT(gmac)	(CNTR_GDM(gmac) + 0x20)
-#define     GDM_RX_FCCNT(gmac)		(CNTR_GDM(gmac) + 0x24)
-#define	    GDM_TX_SKIPCNT(gmac)	(CNTR_GDM(gmac) + 0x28)
-#define	    GDM_TX_COLCNT(gmac)		(CNTR_GDM(gmac) + 0x2C)
-#define	    GDM_TX_GBCNT_LSB(gmac)	(CNTR_GDM(gmac) + 0x30)
-#define	    GDM_TX_GBCNT_MSB(gmac)	(CNTR_GDM(gmac) + 0x34)
-#define	    GDM_TX_GPCNT(gmac)		(CNTR_GDM(gmac) + 0x38)
+#define	MT7622_CNTR_BASE 0x2400
+#define	MT7986_CNTR_BASE 0x1C00
+#define CNTR_GDM(gmac)		((((gmac) == 0 ) ? 0x00 : 0x40))
+#define	    GDM_RX_GBCNT_LSB(gmac)	((gmac) + 0x00)
+#define	    GDM_RX_GBCNT_MSB(gmac)	((gmac) + 0x04)
+#define	    GDM_RX_GPCNT(gmac)		((gmac) + 0x08)
+#define	    GDM_RX_OERCNT(gmac)		((gmac) + 0x10)
+#define	    GDM_RX_FERCNT(gmac)		((gmac) + 0x14)
+#define	    GDM_RX_SHORT_ERCNT(gmac) 	((gmac) + 0x18)
+#define	    GDM_RX_LONG_ERCNT(gmac)	((gmac) + 0x1C)
+#define	    GDM_RX_CSUM_ERCNT(gmac)	((gmac) + 0x20)
+#define	    GDM_RX_FCCNT(gmac)		((gmac) + 0x24)
+#define	    GDM_TX_SKIPCNT(gmac)	((gmac) + 0x28)
+#define	    GDM_TX_COLCNT(gmac)		((gmac) + 0x2C)
+#define	    GDM_TX_GBCNT_LSB(gmac)	((gmac) + 0x30)
+#define	    GDM_TX_GBCNT_MSB(gmac)	((gmac) + 0x34)
+#define	    GDM_TX_GPCNT(gmac)		((gmac) + 0x38)
 
 #define	GE_PORT_BASE 0x10000
 #define	MDIO_ACCESS	GE_PORT_BASE + 0x04

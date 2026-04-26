@@ -81,10 +81,14 @@
 #define	RT_TX_WATCHDOG_TIMEOUT		5
 #define	MII_BUSY_RETRY			1000
 
+#define	RT_CHIPID_MT7622 0x7620
+#define	RT_CHIPID_MT7986 0x7986
+
 #ifdef FDT
 /* more specific and new models should go first */
 static const struct ofw_compat_data rt_compat_data[] = {
-	{ "mediatek,mt7622-eth",	1 },
+	{ "mediatek,mt7622-eth",	RT_CHIPID_MT7622 },
+	{ "mediatek,mt7986-eth",	RT_CHIPID_MT7986 },
 	{ NULL,				0 }
 };
 #endif
@@ -151,6 +155,7 @@ SYSCTL_INT(_hw_rt, OID_AUTO, debug, CTLFLAG_RWTUN, &rt_debug, 0,
 static int
 rt_probe(device_t dev)
 {
+	struct rt_softc *sc = device_get_softc(dev);
 	char buf[80];
 #ifdef FDT
 	const struct ofw_compat_data * cd;
@@ -158,9 +163,11 @@ rt_probe(device_t dev)
 	cd = ofw_bus_search_compatible(dev, rt_compat_data);
 	if (cd->ocd_data == 0)
 	        return (ENXIO);
-#endif
-	snprintf(buf, sizeof(buf), "Mediatek MT7622 Ethernet driver");
 
+	sc->rt_chipid = (unsigned int)(cd->ocd_data);
+#endif
+	snprintf(buf, sizeof(buf), "Ralink %cT%x onChip Ethernet driver",
+		sc->rt_chipid >= 0x7600 ? 'M' : 'R', sc->rt_chipid);
 	device_set_desc_copy(dev, buf);
 	return (BUS_PROBE_GENERIC);
 }
@@ -320,34 +327,54 @@ rt_attach(device_t dev)
 	/* Reset hardware */
 	reset_freng(sc);
 
+	/* Fill in soc-specific registers map */
+	switch(sc->rt_chipid) {
+	    case RT_CHIPID_MT7622:
+		sc->pdma_base=RT5350_PDMA_BASE;
+		sc->pdma_glo_cfg=RT5350_PDMA_BASE+RT5350_PDMA_GLO_CFG;
+		sc->pdma_rst_idx=RT5350_PDMA_BASE+RT5350_PDMA_RST_IDX;
+		sc->pdma_delay_int_cfg=RT5350_PDMA_BASE+RT5350_DELAY_INT_CFG;
+		sc->pdma_int_status=RT5350_PDMA_BASE+RT5350_PDMA_INT_STATUS;
+		sc->pdma_int_enable=RT5350_PDMA_BASE+RT5350_PDMA_INT_ENABLE;
+		sc->cntr_base=MT7622_CNTR_BASE;
+		break;
+	    case RT_CHIPID_MT7986:
+		sc->pdma_base = MT7986_PDMA_BASE;
+		sc->pdma_glo_cfg=MT7986_PDMA_BASE+RT5350_PDMA_GLO_CFG;
+		sc->pdma_rst_idx=MT7986_PDMA_BASE+RT5350_PDMA_RST_IDX;
+		sc->pdma_delay_int_cfg=MT7986_PDMA_BASE+RT5350_DELAY_INT_CFG;
+		sc->pdma_int_status=MT7986_PDMA_BASE+RT5350_PDMA_INT_STATUS;
+		sc->pdma_int_enable=MT7986_PDMA_BASE+RT5350_PDMA_INT_ENABLE;
+		sc->cntr_base = MT7986_CNTR_BASE;
+		break;
+	  default:
+		device_printf(dev, "Ups! Unknow rt_chipid");
+	}
 //	sc->csum_fail_ip = MT7620_RXD_SRC_IP_CSUM_FAIL;
 //	sc->csum_fail_l4 = MT7620_RXD_SRC_L4_CSUM_FAIL;
 	sc->csum_fail_ip = MT7621_RXD_SRC_IP_CSUM_FAIL;
 	sc->csum_fail_l4 = MT7621_RXD_SRC_L4_CSUM_FAIL;
 
 	/* fallthrough */
-	device_printf(dev, "MT7622 Ethernet MAC (rev 0x%08x)\n", sc->mac_rev);
+	device_printf(dev, "%cT%x Ethernet MAC (rev 0x%08x)\n",
+	    sc->rt_chipid >= 0x7600 ? 'M' : 'R',
+	    sc->rt_chipid, sc->mac_rev);
 
 	/* RT5350: No GDMA, PSE, CDMA, PPE */
 //	RT_WRITE(sc, GE_PORT_BASE + 0x0C00, // UDPCS, TCPCS, IPCS=1
 //		RT_READ(sc, GE_PORT_BASE + 0x0C00) | (0x7<<16));
-	sc->pdma_delay_int_cfg=RT5350_DELAY_INT_CFG;
-	sc->pdma_int_status=RT5350_PDMA_INT_STATUS;
-	sc->pdma_int_enable=RT5350_PDMA_INT_ENABLE;
-	sc->pdma_glo_cfg=RT5350_PDMA_GLO_CFG;
-	sc->pdma_rst_idx=RT5350_PDMA_RST_IDX;
 	for (i = 0; i < RT_SOFTC_TX_RING_COUNT; i++) {
-		sc->tx_base_ptr[i]=RT5350_TX_BASE_PTR(i);
-		sc->tx_max_cnt[i]=RT5350_TX_MAX_CNT(i);
-		sc->tx_ctx_idx[i]=RT5350_TX_CTX_IDX(i);
-		sc->tx_dtx_idx[i]=RT5350_TX_DTX_IDX(i);
+		sc->tx_base_ptr[i]=sc->pdma_base + RT5350_TX_BASE_PTR(i);
+		sc->tx_max_cnt[i]=sc->pdma_base + RT5350_TX_MAX_CNT(i);
+		sc->tx_ctx_idx[i]=sc->pdma_base + RT5350_TX_CTX_IDX(i);
+		sc->tx_dtx_idx[i]=sc->pdma_base + RT5350_TX_DTX_IDX(i);
 	}
 	sc->rx_ring_count=2;
 	for (i = 0; i < sc->rx_ring_count; i++) {
-		sc->rx_base_ptr[i]=RT5350_RX_BASE_PTR(i);
-		sc->rx_max_cnt[i]=RT5350_RX_MAX_CNT(i);
-		sc->rx_calc_idx[i]=RT5350_RX_CALC_IDX(i);
-		sc->rx_drx_idx[i]=RT5350_RX_DRX_IDX(i);
+		sc->rx_base_ptr[i]=sc->pdma_base + RT5350_RX_BASE_PTR(i);
+		sc->rx_max_cnt[i]=sc->pdma_base + RT5350_RX_MAX_CNT(i);
+		sc->rx_calc_idx[i]=sc->pdma_base + RT5350_RX_CALC_IDX(i);
+		sc->rx_drx_idx[i]=sc->pdma_base + RT5350_RX_DRX_IDX(i);
 	}
 	sc->int_rx_done_mask=RT5350_INT_RXQ0_DONE;
 	sc->int_tx_done_mask=RT5350_INT_TXQ0_DONE;
@@ -695,14 +722,25 @@ rt_init_locked(void *priv)
 	RT_WRITE(sc, sc->pdma_int_status, 0xffffffff);
 
 	/* enable interrupts */
-	tmp = RT5350_INT_TX_COHERENT |
-		RT5350_INT_RX_COHERENT |
-		RT5350_INT_TXQ3_DONE |
-		RT5350_INT_TXQ2_DONE |
-		RT5350_INT_TXQ1_DONE |
-		RT5350_INT_TXQ0_DONE |
-		RT5350_INT_RXQ1_DONE |
-		RT5350_INT_RXQ0_DONE;
+	if (sc->rt_chipid == RT_CHIPID_MT7986)
+		tmp = MT7986_INT_TX_COHERENT |
+		    MT7986_INT_RX_COHERENT |
+		    RT5350_INT_TXQ3_DONE |
+		    RT5350_INT_TXQ2_DONE |
+		    RT5350_INT_TXQ1_DONE |
+		    RT5350_INT_TXQ0_DONE |
+		    RT5350_INT_RXQ1_DONE |
+		    RT5350_INT_RXQ0_DONE;
+
+	else
+		tmp = RT5350_INT_TX_COHERENT |
+		    RT5350_INT_RX_COHERENT |
+		    RT5350_INT_TXQ3_DONE |
+		    RT5350_INT_TXQ2_DONE |
+		    RT5350_INT_TXQ1_DONE |
+		    RT5350_INT_TXQ0_DONE |
+		    RT5350_INT_RXQ1_DONE |
+		    RT5350_INT_RXQ0_DONE;
 
 	sc->intr_enable_mask = tmp;
 
@@ -877,7 +915,10 @@ rt_tx_data(struct rt_softc *sc, struct mbuf *m, int qid)
 		 */
 
 		/* Set destination */
-		desc->dst = (TXDSCR_DST_PORT_GDMA1 << 1); /* start at bit one */
+		if (sc->rt_chipid == RT_CHIPID_MT7622)
+			desc->dst = (TXDSCR_DST_PORT_GDMA1 << 1); /* start at bit one */
+		else
+			desc->dst = (TXDSCR_DST_PORT_GDMA1);
 
 		if ((if_getcapenable(ifp) & IFCAP_TXCSUM) != 0)
 			desc->dst |= (TXDSCR_IP_CSUM_GEN |
@@ -1122,11 +1163,20 @@ rt_rt5350_intr(void *arg)
 
 	if (!(if_getdrvflags(ifp) & IFF_DRV_RUNNING))
 	        return;
-
-	if (status & RT5350_INT_TX_COHERENT)
-		rt_tx_coherent_intr(sc);
-	if (status & RT5350_INT_RX_COHERENT)
-		rt_rx_coherent_intr(sc);
+	if (sc->rt_chipid == RT_CHIPID_MT7986) {
+		if (status & MT7986_INT_TX_COHERENT)
+			rt_tx_coherent_intr(sc);
+	} else {
+		if (status & RT5350_INT_TX_COHERENT)
+			rt_tx_coherent_intr(sc);
+	}
+	if (sc->rt_chipid == RT_CHIPID_MT7986) {
+		if (status & MT7986_INT_RX_COHERENT)
+			rt_rx_coherent_intr(sc);
+	} else {
+		if (status & RT5350_INT_RX_COHERENT)
+			rt_rx_coherent_intr(sc);
+	}
 	if (status & RT5350_RX_DLY_INT)
 	        rt_rx_delay_intr(sc);
 	if (status & RT5350_TX_DLY_INT)
@@ -1661,24 +1711,24 @@ rt_update_raw_counters(struct rt_softc *sc)
 	int gmac = 0;
 	uint32_t tmp;
 
-	sc->tx_bytes	+= RT_READ(sc, GDM_TX_GBCNT_LSB(gmac));
-	tmp = RT_READ(sc,GDM_TX_GBCNT_MSB(gmac));
+	sc->tx_bytes	+= RT_READ(sc, sc->cntr_base + GDM_TX_GBCNT_LSB(gmac));
+	tmp = RT_READ(sc, sc->cntr_base + GDM_TX_GBCNT_MSB(gmac));
 	if (tmp)
 		sc->tx_bytes    += ((uint64_t) tmp << 32);
-	sc->tx_packets	+= RT_READ(sc, GDM_TX_GPCNT(gmac));
-	sc->tx_skip	+= RT_READ(sc, GDM_TX_SKIPCNT(gmac));
-	sc->tx_collision+= RT_READ(sc, GDM_TX_COLCNT(gmac));
+	sc->tx_packets	+= RT_READ(sc, sc->cntr_base + GDM_TX_GPCNT(gmac));
+	sc->tx_skip	+= RT_READ(sc, sc->cntr_base + GDM_TX_SKIPCNT(gmac));
+	sc->tx_collision+= RT_READ(sc, sc->cntr_base + GDM_TX_COLCNT(gmac));
 
-	sc->rx_bytes	+= RT_READ(sc, GDM_RX_GBCNT_LSB(gmac));
-	tmp = RT_READ(sc,GDM_RX_GBCNT_MSB(gmac));
+	sc->rx_bytes	+= RT_READ(sc, sc->cntr_base + GDM_RX_GBCNT_LSB(gmac));
+	tmp = RT_READ(sc, sc->cntr_base + GDM_RX_GBCNT_MSB(gmac));
 	if (tmp)
 		sc->rx_bytes    += ((uint64_t)tmp << 32);
-	sc->rx_packets	+= RT_READ(sc, GDM_RX_GPCNT(gmac));
-	sc->rx_crc_err	+= RT_READ(sc, GDM_RX_CSUM_ERCNT(gmac));
-	sc->rx_short_err+= RT_READ(sc, GDM_RX_SHORT_ERCNT(gmac));
-	sc->rx_long_err	+= RT_READ(sc, GDM_RX_LONG_ERCNT(gmac));
-	sc->rx_phy_err	+= RT_READ(sc, GDM_RX_FERCNT(gmac));
-	sc->rx_fifo_overflows+= RT_READ(sc, GDM_RX_OERCNT(gmac));
+	sc->rx_packets	+= RT_READ(sc, sc->cntr_base + GDM_RX_GPCNT(gmac));
+	sc->rx_crc_err	+= RT_READ(sc, sc->cntr_base + GDM_RX_CSUM_ERCNT(gmac));
+	sc->rx_short_err+= RT_READ(sc, sc->cntr_base + GDM_RX_SHORT_ERCNT(gmac));
+	sc->rx_long_err	+= RT_READ(sc, sc->cntr_base + GDM_RX_LONG_ERCNT(gmac));
+	sc->rx_phy_err	+= RT_READ(sc, sc->cntr_base + GDM_RX_FERCNT(gmac));
+	sc->rx_fifo_overflows+= RT_READ(sc, sc->cntr_base + GDM_RX_OERCNT(gmac));
 }
 
 static void
