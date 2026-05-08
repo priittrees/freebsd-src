@@ -791,3 +791,5 @@ arm64/mediatek/mtk_mmc.c			optional mmc fdt soc_mediatek
 arm64/mediatek/if_rt.c				optional rt fdt soc_mediatek
 dev/etherswitch/mtkswitch/mtkswitch.c		optional mtkswitch fdt
 dev/etherswitch/mtkswitch/mtkswitch_mt7531.c	optional mtkswitch fdt
+arm64/mediatek/mtk_gpio.c			optional fdt soc_mediatek
+arm64/mediatek/mt7622/mt7622_padconf.c		optional fdt soc_mediatek

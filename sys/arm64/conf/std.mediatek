@@ -4,9 +4,13 @@ options         SOC_MEDIATEK
 # Uart
 device		uart_ns8250
 
- # Ethernet, BPF and bridge support
-device		miibus
-device		mdio
+# GPIO
+device		gpio
+device		gpioiic
+
+# Ethernet, BPF and bridge support
+device          miibus
+device          mdio
 device          rt
 device          bpf
 device          if_bridge

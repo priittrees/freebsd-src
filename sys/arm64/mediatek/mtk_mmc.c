@@ -252,16 +252,19 @@ mtk_mmc_attach(device_t dev)
 	val |= MTK_MSDC_PATCH_BIT0_PTCH30;
 	MTK_MMC_WRITE_4(sc, MTK_MSDC_PATCH_BIT0, val);
 
-
+#if 0
 	if (sc->child == NULL) {
-		sc->child = device_add_child(sc->sc_dev, "mmc", -1);
+		sc->child = device_add_child(sc->sc_dev, "mmc",
+		    DEVICE_UNIT_ANY);
 		if (sc->child) {
 			device_set_ivars(sc->child, sc);
 			(void)device_probe_and_attach(sc->child);
 		}
 	}
-	 mmc_fdt_parse(dev, 0, &sc->mmc_helper, &sc->sc_host);
-	 mmc_fdt_gpio_setup(dev, 0, &sc->mmc_helper, mtk_mmc_helper_cd_handler);
+#else
+	mmc_fdt_parse(dev, 0, &sc->mmc_helper, &sc->sc_host);
+	mmc_fdt_gpio_setup(dev, 0, &sc->mmc_helper, mtk_mmc_helper_cd_handler);
+#endif
 	return (0);
 
 fail:
@@ -842,30 +845,27 @@ mtk_mmc_request(device_t bus, device_t child, struct mmc_request *req)
 static void
 mtk_mmc_helper_cd_handler(device_t dev, bool present)
 {
-//	struct mtk_mmc_softc *sc;
-//
-//	sc = device_get_softc(dev);
-//	MTK_MMC_LOCK(sc);
-//	if (present) {
-//		if (sc->child == NULL) {
-//			printf("%s present %i\n", __func__, present);
-//			sc->child = device_add_child(sc->sc_dev, "mmc", -1);
-//			MTK_MMC_UNLOCK(sc);
-//			if (sc->child) {
-//				device_set_ivars(sc->child, sc);
-//				(void)device_probe_and_attach(sc->child);
-//			}
-//		} else
-//			MTK_MMC_UNLOCK(sc);
-//	} else {
-//		/* Card isn't present, detach if necessary */
-//		if (sc->child != NULL) {
-//			MTK_MMC_UNLOCK(sc);
-//			device_delete_child(sc->sc_dev, sc->child);
-//			sc->child = NULL;
-//		} else
-//			MTK_MMC_UNLOCK(sc);
-//	}
+	struct mtk_mmc_softc *sc;
+
+	sc = device_get_softc(dev);
+	if (present) {
+		if (sc->child == NULL) {
+			device_printf(sc->sc_dev, "Card inserted\n");
+			sc->child = device_add_child(sc->sc_dev, "mmc",
+			    DEVICE_UNIT_ANY);
+			if (sc->child) {
+				device_set_ivars(sc->child, sc);
+				(void)device_probe_and_attach(sc->child);
+			}
+		}
+	} else {
+		/* Card isn't present, detach if necessary */
+		if (sc->child != NULL) {
+			device_printf(sc->sc_dev, "Card removed\n");
+			device_delete_child(sc->sc_dev, sc->child);
+			sc->child = NULL;
+		}
+	}
 }
 
 static int
