@@ -973,11 +973,12 @@ clknode_get_freq(struct clknode *clknode, uint64_t *freq)
 	return (0);
 }
 
+#define CLK_SET_NOTBUSY 0x00020000
 static int
 _clknode_set_freq(struct clknode *clknode, uint64_t *freq, int flags,
     int enablecnt)
 {
-	int rv, done;
+	int rv = 0, done;
 	uint64_t parent_freq;
 
 	/* We have exclusive topology lock, node lock is not needed. */
@@ -985,7 +986,7 @@ _clknode_set_freq(struct clknode *clknode, uint64_t *freq, int flags,
 
 	/* Check for no change */
 	if (clknode->freq == *freq)
-		return (0);
+		goto out;
 
 	parent_freq = 0;
 
@@ -995,18 +996,19 @@ _clknode_set_freq(struct clknode *clknode, uint64_t *freq, int flags,
 	 * OR
 	 *   clock is glitch free and is enabled by calling consumer only
 	 */
-	if ((flags & CLK_SET_DRYRUN) == 0 &&
+	if (((flags & CLK_SET_DRYRUN) == 0 || (flags & CLK_SET_NOTBUSY)) &&
 	    clknode->enable_cnt > 1 &&
 	    clknode->enable_cnt > enablecnt &&
 	    (clknode->flags & CLK_NODE_GLITCH_FREE) == 0) {
-		return (EBUSY);
+		rv = EBUSY;
+		goto out;
 	}
 
 	/* Get frequency from parent, if the clock has a parent. */
 	if (clknode->parent_cnt > 0) {
 		rv = clknode_get_freq(clknode->parent, &parent_freq);
 		if (rv != 0) {
-			return (rv);
+			goto out;
 		}
 	}
 
@@ -1017,7 +1019,7 @@ _clknode_set_freq(struct clknode *clknode, uint64_t *freq, int flags,
 		    clknode->name, rv);
 		if ((flags & CLK_SET_DRYRUN) == 0)
 			clknode_refresh_cache(clknode, parent_freq);
-		return (rv);
+		goto out;
 	}
 
 	if (done) {
@@ -1029,7 +1031,7 @@ _clknode_set_freq(struct clknode *clknode, uint64_t *freq, int flags,
 				rv = clknode_get_freq(clknode->parent,
 				    &parent_freq);
 				if (rv != 0) {
-					return (rv);
+					goto out;
 				}
 			}
 			clknode_refresh_cache(clknode, parent_freq);
@@ -1044,7 +1046,11 @@ _clknode_set_freq(struct clknode *clknode, uint64_t *freq, int flags,
 		    clknode->name);
 		rv = ENXIO;
 	}
-
+out:
+#ifdef CLK_DEBUG
+	printf("CLOCK SET: %s set to %ju => %d\n", clknode_get_name(clknode),
+	    *freq, rv);
+#endif
 	return (rv);
 }
 
