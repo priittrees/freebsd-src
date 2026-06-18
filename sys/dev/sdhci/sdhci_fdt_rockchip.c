@@ -73,15 +73,26 @@
 #define	 RK3399_CORECFG_TUNINGCOUNT		0x3f
 #define	RK3399_GRF_EMMCCORE_CON11		0xf02c
 #define	 RK3399_CORECFG_CLOCKMULTIPLIER		0xff
-
+#define	RK35XX_CTRL_HS400			0x7
 #define	RK3568_EMMC_HOST_CTRL			0x0508
 #define	RK3568_EMMC_EMMC_CTRL			0x052c
+#define	RK35XX_CARD_IS_EMMC			0x1
 #define	RK3568_EMMC_ATCTRL			0x0540
+#define	 ATCTRL_SWIN_TH_ENABLE			(1 << 2)
+#define	 ATCTRL_RPT_TUNE_ERR			(1 << 3)
+#define	 ATCTRL_SW_TUNE_ENABLE			(1 << 4)
+#define	 ATCTRL_TUNE_CLK_STOP_ENABLE		(1 << 16)
+#define	 ATCTRL_PRE_CHANGE_DLY_OFFSET		17
+#define	 ATCTRL_POST_CHANGE_DLY_OFFSET		19
+#define	 ATCTRL_DLY_1_CYC			0x0
+#define	 ATCTRL_DLY_2_CYC			0x1
+#define	 ATCTRL_DLY_3_CYC			0x2
+#define	 ATCTRL_DLY_4_CYC			0x3
 #define	RK3568_EMMC_DLL_CTRL			0x0800
-#define	 DLL_CTRL_SRST				0x00000001
-#define	 DLL_CTRL_START				0x00000002
+#define	 DLL_CTRL_START				0x00000001
 #define	 DLL_CTRL_START_POINT_DEFAULT		0x00050000
 #define	 DLL_CTRL_INCREMENT_DEFAULT		0x00000200
+#define	 DLL_CTRL_BYPASS			0x01000000
 
 #define	RK3568_EMMC_DLL_RXCLK			0x0804
 #define	 DLL_RXCLK_DELAY_ENABLE			0x08000000
@@ -89,13 +100,17 @@
 
 #define	RK3568_EMMC_DLL_TXCLK			0x0808
 #define	 DLL_TXCLK_DELAY_ENABLE			0x08000000
-#define	 DLL_TXCLK_TAPNUM_DEFAULT		0x00000008
+#define	 DLL_TXCLK_TAPNUM_DEFAULT		0x00000010
 #define	 DLL_TXCLK_TAPNUM_FROM_SW		0x01000000
 
 #define	RK3568_EMMC_DLL_STRBIN			0x080c
 #define	 DLL_STRBIN_DELAY_ENABLE		0x08000000
 #define	 DLL_STRBIN_TAPNUM_DEFAULT		0x00000008
-#define	DLL_STRBIN_TAPNUM_FROM_SW		0x01000000
+#define	 DLL_STRBIN_DELAY_NUM_SEL		0x04000000
+#define	 DLL_STRBIN_DELAY_NUM_OFFSET		16
+#define	 DLL_STRBIN_DELAY_NUM_DEFAULT		0x16
+#define	 DLL_STRBIN_TAPNUM_FROM_SW		0x01000000
+#define	RK3568_EMMC_DLL_CMDOUT			0x0810
 
 #define	RK3568_EMMC_DLL_STATUS0			0x0840
 #define	 DLL_STATUS0_DLL_LOCK			0x00000100
@@ -113,6 +128,8 @@ static struct ofw_compat_data compat_data[] = {
 static int
 sdhci_fdt_rockchip_probe(device_t dev)
 {
+	struct sdhci_fdt_softc *sc = device_get_softc(dev);
+
 	if (!ofw_bus_status_okay(dev))
 		return (ENXIO);
 
@@ -121,6 +138,7 @@ sdhci_fdt_rockchip_probe(device_t dev)
 		device_set_desc(dev, "Rockchip RK3399 fdt SDHCI controller");
 		break;
 	case SDHCI_FDT_RK3568:
+		sc->quirks = SDHCI_QUIRK_BROKEN_TIMEOUT_VAL;
 		device_set_desc(dev, "Rockchip RK3568 fdt SDHCI controller");
 		break;
 	default:
@@ -159,10 +177,105 @@ sdhci_init_rk3399(device_t dev)
 }
 
 static int
+sdhci_init_rk3568(device_t dev)
+{
+	struct sdhci_fdt_softc *sc = device_get_softc(dev);
+	int err, i;
+	char *rk35xx_clocks[] = {"bus", "timer", "axi", "block" };
+
+	/* setup & enable clocks */
+	if (clk_get_by_ofw_name(dev, 0, "core", &sc->clk_core)) {
+		device_printf(dev, "cannot get core clock\n");
+		return (ENXIO);
+	}
+
+	err = clk_enable(sc->clk_core);
+	if(err) {
+		device_printf(dev, "cannot enable core clock\n");
+		return (err);
+	}
+
+	for(i = 0; i < nitems(rk35xx_clocks);i++) {
+		clk_t clk_tmp;
+
+		if (clk_get_by_ofw_name(dev, 0, rk35xx_clocks[i], &clk_tmp)) {
+			device_printf(dev, "cannot get %s clock\n",
+			    rk35xx_clocks[i]);
+			return (ENXIO);
+		}
+
+		err = clk_enable(clk_tmp);
+		if(err)
+			 break;
+
+		device_printf(dev, "enabled clock %s => %s\n",
+		     rk35xx_clocks[i], clk_get_name(clk_tmp));
+	}
+
+	return (err);
+}
+
+static void
+rk35xx_set_uhs_timing(device_t dev, struct sdhci_slot *slot)
+{
+	struct sdhci_fdt_softc *sc = device_get_softc(dev);
+	uint16_t ctrl, ctrl_2;
+	const struct mmc_ios *ios;
+
+	if (slot->version < SDHCI_SPEC_300)
+		return;
+
+	mtx_assert(&slot->mtx, MA_OWNED);
+	ios = &slot->host.ios;
+
+	ctrl_2 = bus_read_2(sc->mem_res[slot->num], SDHCI_HOST_CONTROL2);
+	/* Select Bus Speed Mode for host */
+	ctrl_2 &= ~SDHCI_CTRL2_UHS_MASK;
+
+	if ((ios->timing == bus_timing_mmc_hs200) ||
+	    (ios->timing == bus_timing_uhs_sdr104))
+		ctrl_2 |= SDHCI_CTRL2_UHS_SDR104;
+	else if (ios->timing == bus_timing_uhs_sdr12)
+		ctrl_2 |= SDHCI_CTRL2_UHS_SDR12;
+	else if ((ios->timing == bus_timing_uhs_sdr25))
+		ctrl_2 |= SDHCI_CTRL2_UHS_SDR25;
+	else if (ios->timing == bus_timing_uhs_sdr50)
+		ctrl_2 |= SDHCI_CTRL2_UHS_SDR50;
+	else if ((ios->timing == bus_timing_uhs_ddr50) ||
+		 (ios->timing == bus_timing_mmc_ddr52))
+		ctrl_2 |= SDHCI_CTRL2_UHS_DDR50;
+	else if (ios->timing == bus_timing_mmc_hs400) {
+		/* set CARD_IS_EMMC bit to enable Data Strobe for HS400 */
+		ctrl = bus_read_2(sc->mem_res[slot->num],
+		    RK3568_EMMC_EMMC_CTRL);
+		ctrl |= RK35XX_CARD_IS_EMMC;
+		bus_write_2(sc->mem_res[slot->num],
+		    RK3568_EMMC_EMMC_CTRL, ctrl);
+		ctrl_2 |= RK35XX_CTRL_HS400;
+	}
+
+	bus_write_2(sc->mem_res[slot->num], SDHCI_HOST_CONTROL2, ctrl_2);
+/*	device_printf(brdev,"SUPER FAKE timing\n");*/
+}
+
+static void
+sdhci_fdt_set_uhs_timing(device_t brdev, struct sdhci_slot *slot)
+{
+	if (ofw_bus_search_compatible(brdev, compat_data)->ocd_data ==
+	    SDHCI_FDT_RK3568) {
+		rk35xx_set_uhs_timing(brdev, slot);
+		return;
+	} else {
+		device_printf(brdev, "UHS timings not implemented -- card might not work in UHS mode\n");
+	}
+}
+
+static int
 sdhci_fdt_rockchip_set_clock(device_t dev, struct sdhci_slot *slot, int clock)
 {
 	struct sdhci_fdt_softc *sc = device_get_softc(dev);
 	int32_t val;
+	uint32_t uval;
 	int i;
 
 	if (ofw_bus_search_compatible(dev, compat_data)->ocd_data ==
@@ -172,16 +285,24 @@ sdhci_fdt_rockchip_set_clock(device_t dev, struct sdhci_slot *slot, int clock)
 
 		if (clock) {
 			clk_set_freq(sc->clk_core, clock, 0);
+			uval = bus_read_4(sc->mem_res[slot->num], RK3568_EMMC_HOST_CTRL) & (~1);
+			bus_write_4(sc->mem_res[slot->num], RK3568_EMMC_HOST_CTRL, uval);
 
 			if (clock <= 52000000) {
 				bus_write_4(sc->mem_res[slot->num],
-				    RK3568_EMMC_DLL_CTRL, 0x0);
+				    RK3568_EMMC_DLL_CTRL,
+				    DLL_CTRL_START|DLL_CTRL_BYPASS);
 				bus_write_4(sc->mem_res[slot->num],
 				    RK3568_EMMC_DLL_RXCLK, DLL_RXCLK_NO_INV);
 				bus_write_4(sc->mem_res[slot->num],
 				    RK3568_EMMC_DLL_TXCLK, 0x0);
 				bus_write_4(sc->mem_res[slot->num],
-				    RK3568_EMMC_DLL_STRBIN, 0x0);
+				    RK3568_EMMC_DLL_CMDOUT, 0x0);
+				uval = DLL_STRBIN_DELAY_ENABLE |
+				    DLL_STRBIN_DELAY_NUM_SEL |
+				    DLL_STRBIN_DELAY_NUM_DEFAULT << DLL_STRBIN_DELAY_NUM_OFFSET;
+				bus_write_4(sc->mem_res[slot->num],
+				    RK3568_EMMC_DLL_STRBIN, uval);
 				return (clock);
 			}
 
@@ -202,7 +323,9 @@ sdhci_fdt_rockchip_set_clock(device_t dev, struct sdhci_slot *slot, int clock)
 				DELAY(1000);
 			}
 			bus_write_4(sc->mem_res[slot->num], RK3568_EMMC_ATCTRL,
-			    (0x1 << 16 | 0x2 << 17 | 0x3 << 19));
+			    ATCTRL_TUNE_CLK_STOP_ENABLE |
+			    ATCTRL_DLY_4_CYC << ATCTRL_PRE_CHANGE_DLY_OFFSET |
+			    ATCTRL_DLY_4_CYC << ATCTRL_POST_CHANGE_DLY_OFFSET);
 			bus_write_4(sc->mem_res[slot->num],
 			    RK3568_EMMC_DLL_RXCLK,
 			    DLL_RXCLK_DELAY_ENABLE | DLL_RXCLK_NO_INV);
@@ -212,7 +335,8 @@ sdhci_fdt_rockchip_set_clock(device_t dev, struct sdhci_slot *slot, int clock)
 			bus_write_4(sc->mem_res[slot->num],
 			    RK3568_EMMC_DLL_STRBIN, DLL_STRBIN_DELAY_ENABLE |
 			    DLL_STRBIN_TAPNUM_DEFAULT |
-			    DLL_STRBIN_TAPNUM_FROM_SW);
+			    DLL_STRBIN_TAPNUM_FROM_SW |
+			    DLL_RXCLK_NO_INV);
 		}
 	}
 	return (sdhci_fdt_set_clock(dev, slot, clock));
@@ -249,16 +373,28 @@ sdhci_fdt_rockchip_attach(device_t dev)
 		}
 		break;
 	case SDHCI_FDT_RK3568:
-		/* setup & enable clocks */
-		if (clk_get_by_ofw_name(dev, 0, "core", &sc->clk_core)) {
-			device_printf(dev, "cannot get core clock\n");
-			return (ENXIO);
+		err = sdhci_init_rk3568(dev);
+		if (err != 0) {
+			device_printf(dev, "Cannot init RK3568 SDHCI\n");
+			return (err);
 		}
-		clk_enable(sc->clk_core);
 		break;
 	default:
 		break;
 	}
+
+	/* TODO I don't no how to use it. It works without it. */
+	/* int slots = sc->num_slots;
+	 * for (i = 0; i < slots; i++) {
+	 * 	uint32_t temp;
+	 * 	if(compat == SDHCI_FDT_RK3568) {
+	 *     		temp = sdhci_fdt_read_4(dev, slot, RK3568_EMMC_HOST_CTRL) & (~1);
+	 *     		sdhci_fdt_write_4(dev, slot, RK3568_EMMC_HOST_CTRL, temp);
+	 *	 }
+	 * 	sdhci_fdt_write_4(dev, slot, RK3568_EMMC_DLL_TXCLK, 0);
+	 * 	sdhci_fdt_write_4(dev, slot, RK3568_EMMC_DLL_STRBIN, 0);
+	 * }
+	 */
 
 	return (sdhci_fdt_attach(dev));
 }
@@ -270,6 +406,7 @@ static device_method_t sdhci_fdt_rockchip_methods[] = {
 
 	/* SDHCI methods */
 	DEVMETHOD(sdhci_set_clock,	sdhci_fdt_rockchip_set_clock),
+	DEVMETHOD(sdhci_set_uhs_timing, sdhci_fdt_set_uhs_timing),
 
 	DEVMETHOD_END
 };
