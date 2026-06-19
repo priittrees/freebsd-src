@@ -75,6 +75,8 @@
 #define	 RK3399_CORECFG_CLOCKMULTIPLIER		0xff
 #define	RK35XX_CTRL_HS400			0x7
 #define	RK3568_EMMC_HOST_CTRL			0x0508
+#define	 HOST_CTRL_CMD_CONFLICT_CHECK		(1 << 0)
+#define	 HOST_CTRL_SW_CG_DIS			(1 << 4)
 #define	RK3568_EMMC_EMMC_CTRL			0x052c
 #define	RK35XX_CARD_IS_EMMC			0x1
 #define	RK3568_EMMC_ATCTRL			0x0540
@@ -285,9 +287,11 @@ sdhci_fdt_rockchip_set_clock(device_t dev, struct sdhci_slot *slot, int clock)
 
 		if (clock) {
 			clk_set_freq(sc->clk_core, clock, 0);
-			uval = bus_read_4(sc->mem_res[slot->num], RK3568_EMMC_HOST_CTRL) & (~1);
-			bus_write_4(sc->mem_res[slot->num], RK3568_EMMC_HOST_CTRL, uval);
-
+			uval = bus_read_4(sc->mem_res[slot->num],
+			    RK3568_EMMC_HOST_CTRL);
+			uval &= (~HOST_CTRL_CMD_CONFLICT_CHECK);
+			bus_write_4(sc->mem_res[slot->num],
+			    RK3568_EMMC_HOST_CTRL, uval);
 			if (clock <= 52000000) {
 				bus_write_4(sc->mem_res[slot->num],
 				    RK3568_EMMC_DLL_CTRL,
@@ -342,6 +346,31 @@ sdhci_fdt_rockchip_set_clock(device_t dev, struct sdhci_slot *slot, int clock)
 	return (sdhci_fdt_set_clock(dev, slot, clock));
 }
 
+static void
+rk35xx_init_slots (device_t dev)
+{
+	struct sdhci_fdt_softc *sc = device_get_softc(dev);
+	struct sdhci_slot *slot;
+	uint32_t uval;
+	int i, slots;
+
+	slots = sc->num_slots;
+
+	for (i = 0; i < slots; i++) {
+		slot = &sc->slots[i];
+		if (ofw_bus_search_compatible(dev, compat_data)->ocd_data ==
+		    SDHCI_FDT_RK3568) {
+			uval = bus_read_4(sc->mem_res[slot->num],
+			    RK3568_EMMC_HOST_CTRL);
+			uval &= (~HOST_CTRL_CMD_CONFLICT_CHECK);
+			bus_write_4(sc->mem_res[slot->num],
+			    RK3568_EMMC_HOST_CTRL, uval);
+		}
+		bus_write_4(sc->mem_res[slot->num], RK3568_EMMC_DLL_TXCLK, 0);
+		bus_write_4(sc->mem_res[slot->num], RK3568_EMMC_DLL_STRBIN, 0);
+	}
+}
+
 static int
 sdhci_fdt_rockchip_attach(device_t dev)
 {
@@ -383,20 +412,13 @@ sdhci_fdt_rockchip_attach(device_t dev)
 		break;
 	}
 
-	/* TODO I don't no how to use it. It works without it. */
-	/* int slots = sc->num_slots;
-	 * for (i = 0; i < slots; i++) {
-	 * 	uint32_t temp;
-	 * 	if(compat == SDHCI_FDT_RK3568) {
-	 *     		temp = sdhci_fdt_read_4(dev, slot, RK3568_EMMC_HOST_CTRL) & (~1);
-	 *     		sdhci_fdt_write_4(dev, slot, RK3568_EMMC_HOST_CTRL, temp);
-	 *	 }
-	 * 	sdhci_fdt_write_4(dev, slot, RK3568_EMMC_DLL_TXCLK, 0);
-	 * 	sdhci_fdt_write_4(dev, slot, RK3568_EMMC_DLL_STRBIN, 0);
-	 * }
-	 */
+	err = sdhci_fdt_attach(dev);
+	if (err)
+		return err;
 
-	return (sdhci_fdt_attach(dev));
+	rk35xx_init_slots(dev);
+
+	return (0);
 }
 
 static device_method_t sdhci_fdt_rockchip_methods[] = {
