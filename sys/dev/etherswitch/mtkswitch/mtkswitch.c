@@ -88,8 +88,8 @@ static const struct ofw_compat_data compat_data[] = {
 static void
 mtkswitch_identify(driver_t *driver, device_t parent)
 {
-	if (device_find_child(parent, "mtkswitch", -1) == NULL)
-		BUS_ADD_CHILD(parent, 0, "mtkswitch", -1);
+	if (device_find_child(parent, "mtkswitch", DEVICE_UNIT_ANY) == NULL)
+		BUS_ADD_CHILD(parent, 0, "mtkswitch", DEVICE_UNIT_ANY);
 }
 #endif
 
