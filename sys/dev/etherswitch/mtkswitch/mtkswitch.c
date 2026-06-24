@@ -770,4 +770,5 @@ DRIVER_MODULE(miibus, mtkswitch, miibus_driver, 0, 0);
 DRIVER_MODULE(etherswitch, mtkswitch, etherswitch_driver, 0, 0);
 MODULE_VERSION(mtkswitch, 1);
 MODULE_DEPEND(mtkswitch, mdio, 1, 1, 1);
+MODULE_DEPEND(mtkswitch, etherswitch, 1, 1, 1);
 #endif
