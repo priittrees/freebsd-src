@@ -456,14 +456,18 @@ enetc_detach(if_ctx_t ctx)
 
 	sc = iflib_get_softc(ctx);
 
-	for (i = 0; i < sc->rx_num_queues; i++)
-		iflib_irq_free(ctx, &sc->rx_queues[i].irq);
+	if (sc->rx_queues != NULL) {
+		for (i = 0; i < sc->rx_num_queues; i++)
+			iflib_irq_free(ctx, &sc->rx_queues[i].irq);
+	}
 
 	bus_generic_detach(sc->dev);
 
-	if (sc->regs != NULL)
+	if (sc->regs != NULL) {
 		error = bus_release_resource(sc->dev, SYS_RES_MEMORY,
 		    rman_get_rid(sc->regs), sc->regs);
+		sc->regs = NULL;
+	}
 
 	if (sc->ctrl_queue.dma.idi_size != 0)
 		iflib_dma_free(&sc->ctrl_queue.dma);
@@ -968,7 +972,7 @@ enetc_disable_txq(struct enetc_softc *sc, int qid)
 		cidx = ENETC_TXQ_RD4(sc, qid, ENETC_TBCIR);
 	}
 
-	if (timeout == 0)
+	if (pidx != cidx)
 		device_printf(sc->dev,
 		    "Timeout while waiting for txq%d to stop transmitting packets\n",
 		    qid);

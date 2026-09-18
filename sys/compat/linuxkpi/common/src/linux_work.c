@@ -57,6 +57,7 @@ struct workqueue_struct *system_long_wq;
 struct workqueue_struct *system_unbound_wq;
 struct workqueue_struct *system_highpri_wq;
 struct workqueue_struct *system_power_efficient_wq;
+struct workqueue_struct *system_percpu_wq;
 
 struct taskqueue *linux_irq_work_tq;
 
@@ -506,12 +507,16 @@ linux_cancel_delayed_work(struct delayed_work *dwork)
 }
 
 /*
- * This function cancels the given work structure in a synchronous
- * fashion. It returns true if the work was successfully
- * cancelled. Else the work was already cancelled.
+ * This function cancels the given delayed work structure in a
+ * synchronous fashion. It returns true if pending delayed work was
+ * cancelled. Else the work was not pending.
+ *
+ * If the work restarted itself or was busy while being cancelled,
+ * retry_needed is set to true so the caller can re-check the state.
  */
 static bool
-linux_cancel_delayed_work_sync_int(struct delayed_work *dwork)
+linux_cancel_delayed_work_sync_int(struct delayed_work *dwork, u_int *pending,
+    bool *cancelled)
 {
 	static const uint8_t states[WORK_ST_MAX] __aligned(8) = {
 		[WORK_ST_IDLE] = WORK_ST_IDLE,		/* NOP */
@@ -522,7 +527,6 @@ linux_cancel_delayed_work_sync_int(struct delayed_work *dwork)
 	};
 	struct taskqueue *tq;
 	int ret, state;
-	bool cancelled;
 
 	WITNESS_WARN(WARN_GIANTOK | WARN_SLEEPOK, NULL,
 	    "linux_cancel_delayed_work_sync() might sleep");
@@ -535,18 +539,18 @@ linux_cancel_delayed_work_sync_int(struct delayed_work *dwork)
 		return (false);
 	case WORK_ST_TIMER:
 	case WORK_ST_CANCEL:
-		cancelled = (callout_stop(&dwork->timer.callout) == 1);
+		*cancelled = (callout_stop(&dwork->timer.callout) == 1);
 
 		tq = dwork->work.work_queue->taskqueue;
-		ret = taskqueue_cancel(tq, &dwork->work.work_task, NULL);
+		ret = taskqueue_cancel(tq, &dwork->work.work_task, pending);
 		mtx_unlock(&dwork->timer.mtx);
 
 		callout_drain(&dwork->timer.callout);
 		taskqueue_drain(tq, &dwork->work.work_task);
-		return (cancelled || (ret != 0));
+		return (*cancelled || (ret != 0));
 	default:
 		tq = dwork->work.work_queue->taskqueue;
-		ret = taskqueue_cancel(tq, &dwork->work.work_task, NULL);
+		ret = taskqueue_cancel(tq, &dwork->work.work_task, pending);
 		mtx_unlock(&dwork->timer.mtx);
 		if (ret != 0)
 			taskqueue_drain(tq, &dwork->work.work_task);
@@ -557,11 +561,19 @@ linux_cancel_delayed_work_sync_int(struct delayed_work *dwork)
 bool
 linux_cancel_delayed_work_sync(struct delayed_work *dwork)
 {
-	bool res;
+	u_int pending;
+	bool cancelled;
+	bool res = false;
+	bool ret;
 
-	res = false;
-	while (linux_cancel_delayed_work_sync_int(dwork))
-		res = true;
+	do {
+		pending = 0;
+		cancelled = false;
+		ret = linux_cancel_delayed_work_sync_int(dwork, &pending,
+		    &cancelled);
+		res = res || cancelled || pending != 0;
+	} while (ret);
+
 	return (res);
 }
 
@@ -721,7 +733,14 @@ linux_work_init(void *arg)
 
 	/* populate the workqueue pointers */
 	system_long_wq = linux_system_long_wq;
+	/*
+	 * With Linux v6.17 system_wq was "renamed" to system_percpu_wq with the
+	 * old name staying around.
+	 * Note: neither implementation here does fully implement the per-cpu
+	 * characteristics upstream expects.
+	 */
 	system_wq = linux_system_short_wq;
+	system_percpu_wq = linux_system_short_wq;
 	system_power_efficient_wq = linux_system_short_wq;
 	system_unbound_wq = linux_system_short_wq;
 	system_highpri_wq = linux_system_short_wq;
@@ -737,6 +756,7 @@ linux_work_uninit(void *arg)
 	/* clear workqueue pointers */
 	system_long_wq = NULL;
 	system_wq = NULL;
+	system_percpu_wq = NULL;
 	system_power_efficient_wq = NULL;
 	system_unbound_wq = NULL;
 	system_highpri_wq = NULL;
@@ -748,7 +768,9 @@ linux_irq_work_fn(void *context, int pending)
 {
 	struct irq_work *irqw = context;
 
+	rcu_read_lock();
 	irqw->func(irqw);
+	rcu_read_unlock();
 }
 
 static void
@@ -782,6 +804,7 @@ SYSINIT(linux_irq_work_init, SI_SUB_TASKQ, SI_ORDER_SECOND,
 static void
 linux_irq_work_uninit(void *arg)
 {
+	/* taskqueue_drain_all() executes synchronize_rcu() implicitly */
 	taskqueue_drain_all(linux_irq_work_tq);
 	taskqueue_free(linux_irq_work_tq);
 }

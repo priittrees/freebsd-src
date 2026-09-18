@@ -463,7 +463,6 @@ icmp_input(struct mbuf **mp, int *offp, int proto)
 	int hlen = *offp;
 	int icmplen = ntohs(ip->ip_len) - *offp;
 	int i, code;
-	int fibnum;
 
 	NET_EPOCH_ASSERT();
 
@@ -729,12 +728,10 @@ reflect:
 			break;
 		}
 
-		for ( fibnum = 0; fibnum < rt_numfibs; fibnum++) {
-			rib_add_redirect(fibnum, (struct sockaddr *)&icmpsrc,
-			    (struct sockaddr *)&icmpdst,
-			    (struct sockaddr *)&icmpgw, m->m_pkthdr.rcvif,
-			    RTF_GATEWAY, V_redirtimeout);
-		}
+		rib_add_redirect(M_GETFIB(m), (struct sockaddr *)&icmpsrc,
+		    (struct sockaddr *)&icmpdst,
+		    (struct sockaddr *)&icmpgw, m->m_pkthdr.rcvif,
+		    RTF_GATEWAY, V_redirtimeout);
 		break;
 
 	/*
@@ -965,8 +962,7 @@ icmp_verify_redirect_gateway(struct sockaddr_in *src, struct sockaddr_in *dst,
 	if ((ifa = ifa_ifwithnet((struct sockaddr *)gateway, 0, fibnum))==NULL)
 		return (ENETUNREACH);
 
-	/* TODO: fib-aware. */
-	if (ifa_ifwithaddr_check((struct sockaddr *)gateway))
+	if (ifa_ifwithaddr_fib_check((struct sockaddr *)gateway, fibnum))
 		return (EHOSTUNREACH);
 
 	nh = fib4_lookup(fibnum, dst->sin_addr, 0, NHR_NONE, 0);

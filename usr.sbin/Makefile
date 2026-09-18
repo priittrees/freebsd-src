@@ -51,6 +51,7 @@ SUBDIR=	adduser \
 	nfscbd \
 	nfsd \
 	nfsdumpstate \
+	nfsdtop \
 	nfsrevoke \
 	nfsuserd \
 	nmtree \
@@ -86,6 +87,7 @@ SUBDIR=	adduser \
 	snapinfo \
 	spi \
 	spray \
+	sysconf \
 	syslogd \
 	sysrc \
 	tcpdrop \

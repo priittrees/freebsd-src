@@ -37,12 +37,16 @@
 #include "acpi.h"
 #include "atkbdc.h"
 #include "bhyverun.h"
+#ifdef BHYVE_SNAPSHOT
+#include "snapshot.h"
+#endif
 #include "bootrom.h"
 #include "config.h"
 #include "debug.h"
 #include "e820.h"
 #include "fwctl.h"
 #include "ioapic.h"
+#include "ipc.h"
 #include "inout.h"
 #include "kernemu_dev.h"
 #include "mptbl.h"
@@ -65,6 +69,7 @@ bhyve_init_config(void)
 	set_config_bool("x86.strictmsr", true);
 	set_config_bool("x86.verbosemsr", false);
 	set_config_value("lpc.fwcfg", "bhyve");
+	set_config_value("rundir", BHYVE_RUN_DIR);
 }
 
 void
@@ -244,7 +249,7 @@ bhyve_optparse(int argc, char **argv)
 			set_config_bool("x86.strictmsr", false);
 			break;
 		case 'W':
-			set_config_bool("virtio_msix", false);
+			set_config_bool("virtio.msix", false);
 			break;
 		case 'x':
 			set_config_bool("x86.x2apic", true);
@@ -260,16 +265,9 @@ bhyve_optparse(int argc, char **argv)
 	}
 
 	/* Handle backwards compatibility aliases in config options. */
-	if (get_config_value("lpc.bootrom") != NULL &&
-	    get_config_value("bootrom") == NULL) {
-		warnx("lpc.bootrom is deprecated, use '-o bootrom' instead");
-		set_config_value("bootrom", get_config_value("lpc.bootrom"));
-	}
-	if (get_config_value("lpc.bootvars") != NULL &&
-	    get_config_value("bootvars") == NULL) {
-		warnx("lpc.bootvars is deprecated, use '-o bootvars' instead");
-		set_config_value("bootvars", get_config_value("lpc.bootvars"));
-	}
+	bhyve_cfg_warn("lpc.bootrom", "bootrom");
+	bhyve_cfg_warn("lpc.bootvars", "bootvars");
+	bhyve_cfg_warn("virtio_msix", "virtio.msix");
 }
 
 void

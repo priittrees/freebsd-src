@@ -1088,7 +1088,7 @@ ucl_include_file_single(const unsigned char *data, size_t len,
 	bool res;
 	struct ucl_chunk *chunk;
 	unsigned char *buf = NULL;
-	char *old_curfile, *ext;
+	char *old_curfile, *ext, *tmp;
 	size_t buflen = 0;
 	char filebuf[PATH_MAX], realbuf[PATH_MAX];
 	int prev_state;
@@ -1200,12 +1200,13 @@ ucl_include_file_single(const unsigned char *data, size_t len,
 
 	if (params->use_prefix && params->prefix == NULL) {
 		/* Auto generate a key name based on the included filename */
-		params->prefix = basename(realbuf);
-		ext = strrchr(params->prefix, '.');
+		tmp = basename(realbuf);
+		ext = strrchr(tmp, '.');
 		if (ext != NULL && (strcmp(ext, ".conf") == 0 || strcmp(ext, ".ucl") == 0)) {
 			/* Strip off .conf or .ucl */
 			*ext = '\0';
 		}
+		params->prefix = tmp;
 	}
 	if (params->prefix != NULL) {
 		/* This is a prefixed include */
@@ -2435,9 +2436,7 @@ ucl_object_insert_key_common(ucl_object_t *top, ucl_object_t *elt,
 	if (found == NULL) {
 		top->value.ov = ucl_hash_insert_object(top->value.ov, elt, false);
 		top->len++;
-		if (replace) {
-			ret = false;
-		}
+		/* Key was inserted - return true regardless of replace flag */
 	}
 	else {
 		if (replace) {
@@ -2767,6 +2766,20 @@ ucl_object_iterate_with_error(const ucl_object_t *obj, ucl_object_iter_t *iter, 
 	return NULL;
 }
 
+void
+ucl_object_iterate_end(const ucl_object_t *obj, ucl_object_iter_t *iter)
+{
+	if (iter == NULL || *iter == NULL) {
+		return;
+	}
+
+	if (obj != NULL && obj->type == UCL_OBJECT) {
+		ucl_hash_iterate_free(*iter);
+	}
+
+	*iter = NULL;
+}
+
 enum ucl_safe_iter_flags {
 	UCL_ITERATE_FLAG_UNDEFINED = 0,
 	UCL_ITERATE_FLAG_INSIDE_ARRAY,
@@ -3027,6 +3040,16 @@ bool ucl_object_reserve(ucl_object_t *obj, size_t reserved)
 {
 	if (obj->type == UCL_ARRAY) {
 		UCL_ARRAY_GET(vec, obj);
+
+		if (vec == NULL) {
+			/* Allocate array storage if not present (e.g., copied empty array) */
+			vec = UCL_ALLOC(sizeof(*vec));
+			if (vec == NULL) {
+				return false;
+			}
+			kv_init(*vec);
+			obj->value.av = (void *)vec;
+		}
 
 		if (vec->m < reserved) {
 			/* Preallocate some space for arrays */
@@ -3657,8 +3680,9 @@ ucl_object_copy_internal(const ucl_object_t *other, bool allow_array)
 		}
 
 		if (other->type == UCL_ARRAY || other->type == UCL_OBJECT) {
-			/* reset old value */
+			/* reset old value and length since we will re-add elements below */
 			memset(&new->value, 0, sizeof(new->value));
+			new->len = 0;
 
 			while ((cur = ucl_object_iterate(other, &it, true)) != NULL) {
 				if (other->type == UCL_ARRAY) {

@@ -137,17 +137,16 @@ struct ib_qp *irdma_create_qp(struct ib_pd *ibpd,
 			      struct ib_qp_init_attr *init_attr,
 			      struct ib_udata *udata);
 int irdma_create_ah(struct ib_ah *ib_ah,
-		    struct ib_ah_attr *attr, u32 flags,
+		    struct rdma_ah_attr *attr, u32 flags,
 		    struct ib_udata *udata);
 int irdma_create_ah_stub(struct ib_ah *ib_ah,
-			 struct ib_ah_attr *attr, u32 flags,
+			 struct rdma_ah_attr *attr, u32 flags,
 			 struct ib_udata *udata);
-void irdma_ether_copy(u8 *dmac, struct ib_ah_attr *attr);
+void irdma_ether_copy(u8 *dmac, struct rdma_ah_attr *attr);
 void irdma_destroy_ah(struct ib_ah *ibah, u32 flags);
 void irdma_destroy_ah_stub(struct ib_ah *ibah, u32 flags);
 int irdma_destroy_qp(struct ib_qp *ibqp, struct ib_udata *udata);
 int irdma_dereg_mr(struct ib_mr *ib_mr, struct ib_udata *udata);
-int ib_get_eth_speed(struct ib_device *dev, u32 port_num, u16 *speed, u8 *width);
 enum rdma_link_layer irdma_get_link_layer(struct ib_device *ibdev,
 					  u8 port_num);
 int irdma_roce_port_immutable(struct ib_device *ibdev, u8 port_num,
@@ -156,8 +155,6 @@ int irdma_iw_port_immutable(struct ib_device *ibdev, u8 port_num,
 			    struct ib_port_immutable *immutable);
 int irdma_query_gid(struct ib_device *ibdev, u8 port, int index,
 		    union ib_gid *gid);
-int irdma_query_gid_roce(struct ib_device *ibdev, u8 port, int index,
-			 union ib_gid *gid);
 int irdma_query_pkey(struct ib_device *ibdev, u8 port, u16 index,
 		     u16 *pkey);
 int irdma_query_port(struct ib_device *ibdev, u8 port,
@@ -255,9 +252,8 @@ int irdma_alloc_ucontext(struct ib_ucontext *uctx, struct ib_udata *udata);
 void irdma_dealloc_ucontext(struct ib_ucontext *context);
 int irdma_alloc_pd(struct ib_pd *pd, struct ib_udata *udata);
 void irdma_dealloc_pd(struct ib_pd *ibpd, struct ib_udata *udata);
-int irdma_add_gid(struct ib_device *, u8, unsigned int, const union ib_gid *,
-		  const struct ib_gid_attr *, void **);
-int irdma_del_gid(struct ib_device *, u8, unsigned int, void **);
+int irdma_add_gid(const struct ib_gid_attr *, void **);
+int irdma_del_gid(const struct ib_gid_attr *, void **);
 struct ib_device *ib_device_get_by_netdev(struct ifnet *ndev, int driver_id);
 void ib_device_put(struct ib_device *device);
 void ib_unregister_device_put(struct ib_device *device);

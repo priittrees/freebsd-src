@@ -80,6 +80,9 @@ lkpi_80211_mo_stop(struct ieee80211_hw *hw, bool suspend)
 {
 	struct lkpi_hw *lhw;
 
+	might_sleep();
+	lockdep_assert_wiphy(hw->wiphy);
+
 	lhw = HW_TO_LHW(hw);
 	if (lhw->ops->stop == NULL)
 		return;
@@ -115,6 +118,9 @@ lkpi_80211_mo_set_frag_threshold(struct ieee80211_hw *hw, uint32_t frag_th)
 	struct lkpi_hw *lhw;
 	int error;
 
+	might_sleep();
+	lockdep_assert_wiphy(hw->wiphy);
+
 	lhw = HW_TO_LHW(hw);
 	if (lhw->ops->set_frag_threshold == NULL) {
 		error = EOPNOTSUPP;
@@ -134,6 +140,9 @@ lkpi_80211_mo_set_rts_threshold(struct ieee80211_hw *hw, uint32_t rts_th)
 {
 	struct lkpi_hw *lhw;
 	int error;
+
+	might_sleep();
+	lockdep_assert_wiphy(hw->wiphy);
 
 	lhw = HW_TO_LHW(hw);
 	if (lhw->ops->set_rts_threshold == NULL) {
@@ -190,6 +199,9 @@ lkpi_80211_mo_remove_interface(struct ieee80211_hw *hw, struct ieee80211_vif *vi
 {
 	struct lkpi_hw *lhw;
 	struct lkpi_vif *lvif;
+
+	might_sleep();
+	lockdep_assert_wiphy(hw->wiphy);
 
 	lhw = HW_TO_LHW(hw);
 	if (lhw->ops->remove_interface == NULL)
@@ -596,7 +608,7 @@ lkpi_80211_mo_link_info_changed(struct ieee80211_hw *hw, struct ieee80211_vif *v
 	struct lkpi_hw *lhw;
 
 	might_sleep();
-	/* XXX-FINISH all callers for lockdep_assert_wiphy(hw->wiphy); */
+	lockdep_assert_wiphy(hw->wiphy);
 
 	lhw = HW_TO_LHW(hw);
 	if (lhw->ops->link_info_changed == NULL &&
@@ -628,7 +640,7 @@ lkpi_80211_mo_bss_info_changed(struct ieee80211_hw *hw, struct ieee80211_vif *vi
 {
 	struct lkpi_hw *lhw;
 
-	/* XXX-FINISH all callers for lockdep_assert_wiphy(hw->wiphy); */
+	lockdep_assert_wiphy(hw->wiphy);
 
 	lhw = HW_TO_LHW(hw);
 	if (lhw->ops->bss_info_changed == NULL)

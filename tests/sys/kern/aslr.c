@@ -11,6 +11,7 @@
 #include <sys/user.h>
 #include <sys/wait.h>
 
+#include <fcntl.h>
 #include <libutil.h>
 #include <pwd.h>
 #include <signal.h>
@@ -19,6 +20,7 @@
 #include <unistd.h>
 
 #include <atf-c.h>
+#include "freebsd_test_suite/macros.h"
 
 /*
  * Spawn an unprivileged child with ASLR force-disabled, which then execs
@@ -27,19 +29,22 @@
 static pid_t
 spawn_ping(const atf_tc_t *tc)
 {
+	char line[64];
 	const char *user;
 	struct passwd *passwd;
 	pid_t child;
-	int arg, error;
+	int arg, error, io[2];
 
 	user = atf_tc_get_config_var(tc, "unprivileged_user");
 	passwd = getpwnam(user);
 	ATF_REQUIRE(passwd != NULL);
 
+	ATF_REQUIRE(pipe2(io, O_CLOEXEC) == 0);
 	child = fork();
 	ATF_REQUIRE(child >= 0);
 	if (child == 0) {
-		if (seteuid(passwd->pw_uid) != 0)
+		if (dup2(io[1], STDOUT_FILENO) != STDOUT_FILENO ||
+		    seteuid(passwd->pw_uid) != 0)
 			_exit(1);
 
 		arg = PROC_ASLR_FORCE_DISABLE;
@@ -47,10 +52,12 @@ spawn_ping(const atf_tc_t *tc)
 		if (error != 0)
 			_exit(2);
 
-		execl("/sbin/ping", "ping", "127.0.0.1", NULL);
+		execl("/sbin/ping", "ping", "-q", "127.0.0.1", NULL);
 		_exit(127);
 	}
-	usleep(500000); /* XXX-MJ */
+	ATF_REQUIRE(close(io[1]) == 0);
+	ATF_REQUIRE(read(io[0], line, sizeof(line)) > 0);
+	ATF_REQUIRE(close(io[0]) == 0);
 
 	return (child);
 }
@@ -81,6 +88,18 @@ text_base(pid_t pid, const char *path)
 	return (base);
 }
 
+static uint64_t
+ping_text_base(pid_t pid)
+{
+	uint64_t base;
+
+	base = text_base(pid, "/sbin/ping");
+	if (base == 0)
+		/* Work around name cache inconsistency. */
+		base = text_base(pid, "/sbin/ping6");
+	return (base);
+}
+
 /*
  * Make sure that ASLR can't be disabled for a setuid executable by an
  * unprivileged user.
@@ -98,6 +117,7 @@ ATF_TC_BODY(aslr_setuid, tc)
 	pid_t child, pid;
 	int arg, error, st;
 
+	ATF_REQUIRE_FEATURE("inet");
 	if (!atf_tc_has_config_var(tc, "unprivileged_user"))
 		atf_tc_skip("unprivileged_user not set");
 
@@ -107,9 +127,9 @@ ATF_TC_BODY(aslr_setuid, tc)
 	    "/sbin/ping is not setuid root");
 
 	child = spawn_ping(tc);
-	bases[0] = text_base(child, "/sbin/ping");
+	bases[0] = ping_text_base(child);
 	ATF_REQUIRE_MSG(bases[0] != 0,
-	    "failed to find /sbin/ping text segment");
+	    "failed to find ping text segment");
 
 	arg = 0;
 	error = procctl(P_PID, child, PROC_ASLR_STATUS, &arg);
@@ -129,9 +149,9 @@ ATF_TC_BODY(aslr_setuid, tc)
 
 	for (size_t i = 1; i < nitems(bases); i++) {
 		child = spawn_ping(tc);
-		bases[i] = text_base(child, "/sbin/ping");
+		bases[i] = ping_text_base(child);
 		ATF_REQUIRE_MSG(bases[i] != 0,
-		    "failed to find /sbin/ping text segment");
+		    "failed to find ping text segment");
 		error = kill(child, SIGTERM);
 		ATF_REQUIRE(error == 0);
 		pid = waitpid(child, &st, 0);

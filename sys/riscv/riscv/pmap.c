@@ -112,6 +112,7 @@
  *	and to when physical maps must be made correct.
  */
 
+#include "opt_ddb.h"
 #include "opt_pmap.h"
 
 #include <sys/param.h>
@@ -136,6 +137,10 @@
 #include <sys/sched.h>
 #include <sys/sysctl.h>
 #include <sys/smp.h>
+#ifdef DDB
+#include <sys/kdb.h>
+#include <ddb/ddb.h>
+#endif
 
 #include <vm/vm.h>
 #include <vm/vm_param.h>
@@ -154,6 +159,7 @@
 
 #include <machine/machdep.h>
 #include <machine/md_var.h>
+#include <machine/ifunc.h>
 #include <machine/pcb.h>
 #include <machine/sbi.h>
 #include <machine/thead.h>
@@ -340,6 +346,7 @@ static int pmap_unuse_pt(pmap_t, vm_offset_t, pd_entry_t, struct spglist *);
 static int pmap_change_attr_locked(void *va, vm_size_t size, int mode);
 
 static uint64_t pmap_satp_mode(void);
+static void pmap_invalidate_all(pmap_t pmap);
 
 #define	pmap_clear(pte)			pmap_store(pte, 0)
 #define	pmap_clear_bits(pte, bits)	atomic_clear_64(pte, bits)
@@ -1072,7 +1079,7 @@ pmap_init(void)
  * sfence_vma() on remote CPUs.
  */
 static void
-pmap_invalidate_page(pmap_t pmap, vm_offset_t va)
+pmap_invalidate_page_sbi(pmap_t pmap, vm_offset_t va)
 {
 	cpuset_t mask;
 
@@ -1087,7 +1094,7 @@ pmap_invalidate_page(pmap_t pmap, vm_offset_t va)
 }
 
 static void
-pmap_invalidate_range(pmap_t pmap, vm_offset_t sva, vm_offset_t eva)
+pmap_invalidate_range_sbi(pmap_t pmap, vm_offset_t sva, vm_offset_t eva)
 {
 	cpuset_t mask;
 
@@ -1104,6 +1111,73 @@ pmap_invalidate_range(pmap_t pmap, vm_offset_t sva, vm_offset_t eva)
 	 */
 	sfence_vma();
 	sched_unpin();
+}
+
+#define PMAP_SVINVAL_THRESHOLD (2 * L2_SIZE)
+
+struct svinval_args {
+	vm_offset_t sva;
+	vm_offset_t eva;
+};
+
+static void
+pmap_invalidate_range_svinval_cb(void *arg)
+{
+	struct svinval_args *args = arg;
+	vm_offset_t va;
+
+	sfence_w_inval();
+	for (va = args->sva; va < args->eva; va += PAGE_SIZE)
+		sinval_vma_page(va);
+	sfence_inval_ir();
+}
+
+static void
+pmap_invalidate_range_svinval(pmap_t pmap, vm_offset_t sva, vm_offset_t eva)
+{
+	struct svinval_args args;
+
+	if (CPU_EMPTY(&pmap->pm_active))
+		return;
+
+	if (eva - sva >= PMAP_SVINVAL_THRESHOLD) {
+		pmap_invalidate_all(pmap);
+		return;
+	}
+
+	sched_pin();
+	args.sva = sva;
+	args.eva = eva;
+	fence();
+	if (smp_started)
+		smp_rendezvous_cpus(pmap->pm_active, smp_no_rendezvous_barrier,
+		    pmap_invalidate_range_svinval_cb,
+		    smp_no_rendezvous_barrier, &args);
+	else
+		pmap_invalidate_range_svinval_cb(&args);
+	sched_unpin();
+}
+
+static void
+pmap_invalidate_page_svinval(pmap_t pmap, vm_offset_t va)
+{
+	pmap_invalidate_range_svinval(pmap, va, va + PAGE_SIZE);
+}
+
+DEFINE_IFUNC(, void, pmap_invalidate_range,
+    (pmap_t pmap, vm_offset_t sva, vm_offset_t eva))
+{
+	if (has_svinval)
+		return (pmap_invalidate_range_svinval);
+	return (pmap_invalidate_range_sbi);
+}
+
+DEFINE_IFUNC(, void, pmap_invalidate_page,
+    (pmap_t pmap, vm_offset_t va))
+{
+	if (has_svinval)
+		return (pmap_invalidate_page_svinval);
+	return (pmap_invalidate_page_sbi);
 }
 
 static void
@@ -2906,28 +2980,52 @@ retryl3:
 	PMAP_UNLOCK(pmap);
 }
 
+static pt_entry_t *
+pmap_fault_lookup(pmap_t pmap, vm_offset_t va)
+{
+	pd_entry_t *l2, l2e;
+
+	l2 = pmap_l2(pmap, va);
+	if (l2 == NULL || ((l2e = pmap_load(l2)) & PTE_V) == 0)
+		return (NULL);
+	if ((l2e & PTE_RWX) == 0)
+		return (pmap_l2_to_l3(l2, va));
+	return (l2);
+}
+
 int
 pmap_fault(pmap_t pmap, vm_offset_t va, vm_prot_t ftype)
 {
-	pd_entry_t *l2, l2e;
 	pt_entry_t bits, *pte, oldpte;
 	int rv;
 
 	KASSERT(VIRT_IS_VALID(va), ("pmap_fault: invalid va %#lx", va));
 
+	if (pmap == kernel_pmap) {
+		/*
+		 * Locking the kernel pmap while processing spurious faults
+		 * may lead to a panic since we might be running a critical section
+		 * or already holding the kernel pmap lock.
+		 * We deal with this by taking advantage of the fact that
+		 * kernel PTPs are never freed and performing a lockless lookup
+		 * to determine whether a valid mapping exits.
+		 */
+		pte = pmap_fault_lookup(pmap, va);
+		if (pte != NULL && (pmap_load(pte) & PTE_KERN) == PTE_KERN) {
+			sfence_vma_page(va);
+			return (1);
+		}
+		/*
+		 * The entry is either not present or missing some bits.
+		 * Fall back to the locked lookup below to handle the fault.
+		 */
+	}
+
 	rv = 0;
 	PMAP_LOCK(pmap);
-	l2 = pmap_l2(pmap, va);
-	if (l2 == NULL || ((l2e = pmap_load(l2)) & PTE_V) == 0)
+	pte = pmap_fault_lookup(pmap, va);
+	if (pte == NULL || ((oldpte = pmap_load(pte)) & PTE_V) == 0)
 		goto done;
-	if ((l2e & PTE_RWX) == 0) {
-		pte = pmap_l2_to_l3(l2, va);
-		if (((oldpte = pmap_load(pte)) & PTE_V) == 0)
-			goto done;
-	} else {
-		pte = l2;
-		oldpte = l2e;
-	}
 
 	if ((pmap != kernel_pmap && (oldpte & PTE_U) == 0) ||
 	    (ftype == VM_PROT_WRITE && (oldpte & PTE_W) == 0) ||
@@ -4055,7 +4153,7 @@ pmap_zero_page_area(vm_page_t m, int off, int size)
 /*
  *	pmap_copy_page copies the specified (machine independent)
  *	page by mapping the page into virtual memory and using
- *	bcopy to copy the page, one machine dependent page at a
+ *	memcpy to copy the page, one machine dependent page at a
  *	time.
  */
 void
@@ -4098,7 +4196,7 @@ pmap_copy_pages(vm_page_t ma[], vm_offset_t a_offset, vm_page_t mb[],
 		} else {
 			b_cp = (char *)PHYS_TO_DMAP(p_b) + b_pg_offset;
 		}
-		bcopy(a_cp, b_cp, cnt);
+		memcpy(b_cp, a_cp, cnt);
 		a_offset += cnt;
 		b_offset += cnt;
 		xfersize -= cnt;
@@ -5596,3 +5694,59 @@ SYSCTL_OID(_vm_pmap, OID_AUTO, kernel_maps,
     CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MPSAFE | CTLFLAG_SKIP,
     NULL, 0, sysctl_kmaps, "A",
     "Dump kernel address layout");
+
+#ifdef DDB
+DB_SHOW_COMMAND(pte, pmap_print_pte)
+{
+	pd_entry_t *l0, l0e, *l1, l1e;
+	pt_entry_t *l2, l2e, *l3, l3e;
+	vm_offset_t va;
+	pmap_t pmap;
+
+	if (!have_addr) {
+		db_printf("show pte addr\n");
+		return;
+	}
+
+	va = (vm_offset_t)addr;
+	if (!VIRT_IS_VALID(va)) {
+		db_printf("malformed virtual address %#lx\n", va);
+		return;
+	}
+
+	if (kdb_thread != NULL)
+		pmap = vmspace_pmap(kdb_thread->td_proc->p_vmspace);
+	else
+		pmap = PCPU_GET(curpmap);
+
+	db_printf("VA 0x%016lx", va);
+	if (pmap_mode == PMAP_MODE_SV48) {
+		l0 = pmap_l0(pmap, va);
+		l0e = pmap_load(l0);
+		db_printf(" l0e@0x%016lx 0x%016lx", (uint64_t)l0, l0e);
+	}
+	l1 = pmap_l1(pmap, va);
+	if (l1 == NULL) {
+		db_printf("\n");
+		return;
+	}
+	l1e = pmap_load(l1);
+	db_printf(" l1e@0x%016lx 0x%016lx", (uint64_t)l1, l1e);
+
+	l2 = pmap_l2(pmap, va);
+	if (l2 == NULL) {
+		db_printf("\n");
+		return;
+	}
+	l2e = pmap_load(l2);
+	db_printf(" l2e@0x%016lx 0x%016lx", (uint64_t)l2, l2e);
+
+	l3 = pmap_l3(pmap, va);
+	if (l3 == NULL) {
+		db_printf("\n");
+		return;
+	}
+	l3e = pmap_load(l3);
+	db_printf(" l3e@0x%016lx 0x%016lx\n", (uint64_t)l3, l3e);
+}
+#endif

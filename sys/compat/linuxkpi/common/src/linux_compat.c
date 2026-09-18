@@ -51,6 +51,7 @@
 #include <sys/mman.h>
 #include <sys/stack.h>
 #include <sys/stdarg.h>
+#include <sys/syscall.h>
 #include <sys/sysent.h>
 #include <sys/time.h>
 #include <sys/user.h>
@@ -99,8 +100,11 @@
 #include <linux/printk.h>
 #include <linux/seq_file.h>
 #include <linux/uuid.h>
+#include <linux/mod_devicetable.h>
 
 #if defined(__i386__) || defined(__amd64__)
+#include <asm/cpu_device_id.h>
+#include <asm/cpufeature.h>
 #include <asm/smp.h>
 #include <asm/processor.h>
 #endif
@@ -168,6 +172,16 @@ wait_queue_head_t linux_var_waitq;
 const guid_t guid_null;
 
 enum system_states system_state = SYSTEM_RUNNING;
+
+struct task_struct *
+__lkpi_current(void)
+{
+	struct thread *td;
+
+	td = curthread;
+	linux_set_current(td);
+	return ((struct task_struct *)td->td_lkpi_task);
+}
 
 int
 panic_cmp(struct rb_node *one, struct rb_node *two)
@@ -549,6 +563,8 @@ linux_cdev_pager_populate(vm_object_t vm_obj, vm_pindex_t pidx, int fault_type,
 		 */
 		*first = vmap->vm_pfn_first;
 		*last = *first + vmap->vm_pfn_count - 1;
+		MPASS(pidx >= *first);
+		MPASS(pidx <= *last);
 		err = VM_PAGER_OK;
 		break;
 	default:
@@ -926,19 +942,39 @@ linux_file_ioctl_sub(struct file *fp, struct linux_file *filp,
 	struct task_struct *task = current;
 	unsigned size;
 	int error;
+	bool direct;
 
 	size = IOCPARM_LEN(cmd);
 	/* refer to logic in sys_ioctl() */
+	direct = false;
 	if (size > 0) {
 		/*
 		 * Setup hint for linux_copyin() and linux_copyout().
 		 *
-		 * Background: Linux code expects a user-space address
-		 * while FreeBSD supplies a kernel-space address.
+		 * Background: Linux kernel code expects to operate on
+		 * userspace addresses, but FreeBSD's kern_ioctl()
+		 * will generally provide a kernel address.  For the
+		 * native process ABI, where we know how to find the
+		 * original address, we reach directly into the system
+		 * call args to get it.  Then, if the Linux driver
+		 * copied out to that address, we copy the whole block
+		 * back into the kernel buffer allocated by
+		 * kern_ioctl() so that kern_ioctl() itself doesn't
+		 * clobber the driver's data.
+		 *
+		 * Otherwise, fall back to the LINUX_IOCTL_MIN_PTR
+		 * hack.
 		 */
 		task->bsd_ioctl_data = data;
 		task->bsd_ioctl_len = size;
-		data = (void *)LINUX_IOCTL_MIN_PTR;
+		if ((td->td_pflags & TDP_KTHREAD) == 0 &&
+		    SV_PROC_ABI(td->td_proc) == SV_ABI_FREEBSD &&
+		    td->td_sa.code == SYS_ioctl) {
+			direct = true;
+			data = (void *)(uintptr_t)td->td_sa.args[2];
+		} else {
+			data = (void *)LINUX_IOCTL_MIN_PTR;
+		}
 	} else {
 		/* fetch user-space pointer */
 		data = *(void **)data;
@@ -968,11 +1004,30 @@ linux_file_ioctl_sub(struct file *fp, struct linux_file *filp,
 			error = ENOTTY;
 		}
 	}
+	if (error == 0 && size > 0 && (cmd & IOC_OUT) != 0 && direct) {
+		void *xdata;
+		int error1;
+
+		/*
+		 * Ensure that the copyout in sys_generic.c copies
+		 * over the data which is possibly modified by the
+		 * driver.  A possible error from the copyin() is
+		 * ignored since it is formally possible for the memory
+		 * to become unaccessible in the meantime.  Do the copying
+		 * through the intermediate buffer instead of copying
+		 * directly to bsd_ioctl_data, to ensure atomicity of
+		 * the change with respect to the error.
+		 */
+		xdata = malloc(size, M_TEMP, M_WAITOK);
+		error1 = copyin(data, xdata, size);
+		if (error1 == 0)
+			memcpy(task->bsd_ioctl_data, xdata, size);
+		free(xdata, M_TEMP);
+	}
 	if (size > 0) {
 		task->bsd_ioctl_data = NULL;
 		task->bsd_ioctl_len = 0;
 	}
-
 	if (error == EWOULDBLOCK) {
 		/* update kqfilter status, if any */
 		linux_file_kqfilter_poll(filp,
@@ -1354,6 +1409,19 @@ linux_file_mmap_single(struct file *fp, const struct file_operations *fop,
 				error = ESTALE;
 				vm_no_fault = 1;
 			} else {
+				if (ptr->vm_start == vmap->vm_start &&
+				    ptr->vm_end <= vmap->vm_end) {
+					/*
+					 * Userspace wants to grow an existing
+					 * mapping. We already have a
+					 * `vm_object_t' for this mapping. We
+					 * just need to update the `struct
+					 * vm_area_struct` to have the correct
+					 * end address.
+					 */
+					ptr->vm_end = vmap->vm_end;
+				}
+
 				error = EEXIST;
 				vm_no_fault = (ptr->vm_ops->fault == NULL);
 			}
@@ -2079,7 +2147,7 @@ linux_timer_callback_wrapper(void *context)
 		return;
 	}
 
-	timer->function(timer->data);
+	timer->function(timer);
 }
 
 static int
@@ -2768,6 +2836,12 @@ device_can_wakeup(struct device *dev)
 	return (false);
 }
 
+void
+linuxkpi_device_set_wakeup_capable(struct device *dev, bool capable)
+{
+	dev->power.can_wakeup = capable;
+}
+
 static void
 devm_device_group_remove(struct device *dev, void *p)
 {
@@ -2867,6 +2941,7 @@ linux_compat_init(void *arg)
 	boot_cpu_data.x86 = CPUID_TO_FAMILY(cpu_id);
 	boot_cpu_data.x86_model = CPUID_TO_MODEL(cpu_id);
 	boot_cpu_data.x86_vendor = x86_vendor;
+	boot_cpu_data.x86_stepping = CPUID_TO_STEPPING(cpu_id);
 
 	__cpu_data = kmalloc_array(mp_maxid + 1,
 	    sizeof(*__cpu_data), M_WAITOK | M_ZERO);
@@ -3011,6 +3086,42 @@ linux_compat_uninit(void *arg)
 	rw_destroy(&linux_vma_lock);
 }
 SYSUNINIT(linux_compat, SI_SUB_DRIVERS, SI_ORDER_SECOND, linux_compat_uninit, NULL);
+
+#if defined(__i386__) || defined(__amd64__)
+const struct x86_cpu_id *
+linuxkpi_x86_match_cpu(const struct x86_cpu_id *match_array)
+{
+	const struct x86_cpu_id *match;
+
+	for (match = match_array;
+	    (match->flags & X86_CPU_ID_FLAG_ENTRY_VALID) != 0;
+	    match++) {
+		if (match->vendor != X86_VENDOR_ANY &&
+		    match->vendor != boot_cpu_data.x86_vendor)
+			continue;
+
+		if (match->family != X86_FAMILY_ANY &&
+		    match->family != boot_cpu_data.x86)
+			continue;
+
+		if (match->model != X86_MODEL_ANY &&
+		    match->model != boot_cpu_data.x86_model)
+			continue;
+
+		if (match->model != X86_STEPPING_ANY &&
+		    (match->steppings & BIT(boot_cpu_data.x86_stepping)) == 0)
+			continue;
+
+		if (match->feature != X86_FEATURE_ANY &&
+		    !static_cpu_has(match->feature))
+			continue;
+
+		return (match);
+	}
+
+	return (NULL);
+}
+#endif
 
 /*
  * NOTE: Linux frequently uses "unsigned long" for pointer to integer

@@ -27,9 +27,88 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	world, or to merely disable the most expensive debugging functionality
 	at runtime, run "ln -s 'abort:false,junk:false' /etc/malloc.conf".)
 
+20260916:
+	mfiutil(8)/mrsasutil(8) now display and parse the Exx:Syy drive
+	location notation using the controller's enclosure device ID (EID)
+	instead of its firmware-internal enclosure position index, aligning
+	with Broadcom's storcli/MegaCli tooling.  This changes the numeric
+	value of "xx" for enclosures where the two differ; scripts relying
+	on the previous numbering should be updated to use "show drives"
+	output or storcli's EID column.
+
+20260914:
+	The size of multiple embedded structs have changed and may lead to
+	problems (pci_error_handlers in pci_driver, dev_pm_info in struct device).
+	Bump __FreeBSD_version to 1600026 to allow these LinuxKPI changes to
+	be detcted.
+
+20260414:
+	sysrc(8) has been moved from the "bsdconfig" package to the "rc"
+	package and no longer depends on bsdconfig at runtime.  For pkgbase
+	users, sysrc is now part of set-minimal instead of set-optional.
+
+20260902:
+	struct if_rxd_info now carries a receive timestamp.  iflib drivers
+	must be rebuilt.  __FreeBSD_version has been bumped to 1600022.
+
+20260827:
+	<sys/videoio.h> now provides the V4L2 cropping, control menu and
+	overlay definitions.  __FreeBSD_version has been bumped to 1600021
+	for ports that need to detect them.
+
+20260826:
+	bhyve(8) users who explicitly set the eui64 option for an NVMe
+	device may need to update their configuration.  Due to an incorrect
+	byte-order conversion, bhyve previously presented manually
+	configured EUI-64 values to the guest with their bytes reversed.
+	To preserve the identifier previously visible to the guest,
+	byte-reverse the value in the eui64 option.  Automatically
+	generated EUI-64 values, used when the option is omitted,
+	are unaffected.
+
+20260814:
+	libusb version has been upgraded to 1.0.27 compatible version.
+	All of the missing parts have been implemented.
+
+20260812:
+	The new video(4) framework has landed. <sys/videoio.h> is now provided
+	as the API for communicating with it. __FreeBSD_version has been bumped
+	to 1600020 for ports that need to detect this changeover.
+
+20260728:
+	The Intel 82576 and I350 Virtual Function devices have been split from
+	the igb(4) driver into the igbv driver.  Interfaces previously exposed
+	as igbN are now exposed as igbvN.  Network configuration files must be
+	updated accordingly.
+
+20260727:
+	The wait_for_pids() function in rc.subr, used by rc scripts
+	when stopping or restarting a service, has been modified to
+	use pwait(1)'s new -r option, which requires kernel support.
+	When upgrading across this change, you should install a new
+	kernel first, then reboot, then install a new world, run
+	etcupdate, and reboot again.  Otherwise, you may find that
+	rc.subr is unable to stop services because the running kernel
+	does not provide the support that the updated pwait(1) needs.
+	Alternatively, if you deem it safe, you may use fastboot(8) to
+	reboot without shutting down services first.
+
+20260620:
+	On powerpc64le, long double is now IEEE 754 binary128 (quad
+	precision, 113-bit mantissa) instead of 64-bit double.  This is an
+	ABI-incompatible change with no symbol versioning: all C and C++
+	code that passes, returns, or stores long double (or long double
+	complex) -- including printf/scanf "%Lf", strtold, and the libm
+	*l() routines -- must be rebuilt against the new world.  Mixing old
+	and new objects that exchange long double values will silently
+	corrupt data.  Rebuild all installed ports and any out-of-tree
+	software after upgrading.  Big-endian powerpc and powerpc64 are
+	unaffected and keep 64-bit long double.
+
 20260521:
 	Audio devices are now created with GID 43 / audio. You will need to add
 	users who need access to audio devices to this group.
+
 20260512:
 	"bsdinstall script" will now do a pkgbase installation by default.  To
 	revert to the legacy distset installation, set "DISTRIBUTIONS" in
@@ -258,10 +337,12 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	require libmilter, you can now remove it.
 
 20250815:
-	The [gs]etgroups(2)syscalls have changed. To maintain backwards
-	compatibility with existing programs, you need COMPAT_FREEBSD14 in
-	your kernel config until all applications which use this are
-	rebuild/reinstalled.
+	The behavior of the getgroups(2), setgroups(2), and initgroups(3)
+	interfaces has changed, and their version numbers have been incremented.
+	To keep existing binaries and libraries working, ensure that
+	COMPAT_FREEBSD14 is included in your kernel configuration.
+	Alternatively, rebuild and reinstall applications that use these
+	interfaces.
 
 20250815:
 	jemalloc 5.3.0 has been committed to the tree.
@@ -2558,7 +2639,7 @@ COMMON ITEMS:
 	<reboot in single user>				[3]
 	etcupdate -p					[5]
 	make installworld
-	etcupdate -B					[4]
+	etcupdate					[4]
 	make delete-old					[6]
 	<reboot>
 
@@ -2596,7 +2677,7 @@ COMMON ITEMS:
 	<reboot in single user>				[3]
 	etcupdate -p					[5]
 	make installworld
-	etcupdate -B					[4]
+	etcupdate					[4]
 	make delete-old					[6]
 	<reboot>
 

@@ -292,14 +292,6 @@
     ..
     games
     ..
-    gnu
-        lib
-        ..
-        usr.bin
-            diff
-            ..
-        ..
-    ..
     include
     ..
     lib
@@ -499,7 +491,11 @@
         ..
         dhclient
         ..
+        fsck_msdosfs
+        ..
         growfs
+        ..
+        hastd
         ..
         ifconfig
         ..
@@ -832,7 +828,11 @@
         file
         ..
         fs
+            fdescfs
+            ..
             fusefs
+            ..
+            pjdfstest
             ..
             tarfs
             ..
@@ -875,6 +875,8 @@
                 ..
                 virstor
                 ..
+                zoned
+                ..
             ..
         ..
         kern
@@ -911,6 +913,8 @@
                 ..
             ..
             routing
+            ..
+            wg
             ..
         ..
         netgraph
@@ -976,6 +980,8 @@
             ..
             utimensat
             ..
+        ..
+        pmc
         ..
         posixshm
         ..
@@ -1253,6 +1259,8 @@
         ..
         truncate
         ..
+        truss
+        ..
         tsort
         ..
         unifdef
@@ -1315,11 +1323,15 @@
         ..
         sa
         ..
+        sysconf
+        ..
         syslogd
         ..
         sysrc
         ..
         traceroute
+        ..
+        zonectl
         ..
     ..
 ..

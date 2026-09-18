@@ -177,7 +177,7 @@ struct	in6_ndifreq {
 #define ND_COMPUTE_RTIME(x) \
 		(((MIN_RANDOM_FACTOR * (x >> 10)) + (arc4random() & \
 		((MAX_RANDOM_FACTOR - MIN_RANDOM_FACTOR) * (x >> 10)))) /1000)
-#define MAX_NEIGHBOR_ADVERTISEMENT	3	/* RFC4891 Section 10 */
+#define MAX_NEIGHBOR_ADVERTISEMENT	3	/* RFC4861 Section 10 */
 
 struct nd_defrouter {
 	TAILQ_ENTRY(nd_defrouter) dr_entry;
@@ -230,6 +230,7 @@ struct nd_prefix {
 #define ndpr_raf_onlink		ndpr_flags.onlink
 #define ndpr_raf_auto		ndpr_flags.autonomous
 #define ndpr_raf_router		ndpr_flags.router
+#define ndpr_raf_dhcp6pd	ndpr_flags.dhcp6_pd
 
 struct nd_pfxrouter {
 	LIST_ENTRY(nd_pfxrouter) pfr_entry;
@@ -287,7 +288,7 @@ VNET_DECLARE(int, ip6_temp_regen_advance); /* seconds */
 #define	V_ip6_temp_regen_advance	VNET(ip6_temp_regen_advance)
 
 union nd_opts {
-	struct nd_opt_hdr *nd_opt_array[24];	/* max = ND_OPT_ROUTE_INFO */
+	struct nd_opt_hdr *nd_opt_array[25];	/* max = ND_OPT_ROUTE_INFO */
 	struct {
 		struct nd_opt_hdr *zero;
 		struct nd_opt_hdr *src_lladdr;
@@ -380,6 +381,7 @@ void nd6_ns_input(struct mbuf *, int, int);
 void nd6_ns_output(struct ifnet *, const struct in6_addr *,
 	const struct in6_addr *, const struct in6_addr *, uint8_t *);
 caddr_t nd6_ifptomac(struct ifnet *);
+u_int nd6_lladdr_opt_pad(struct ifnet *);
 void nd6_dad_init(void);
 void nd6_dad_start(struct ifaddr *, int);
 void nd6_dad_stop(struct ifaddr *);

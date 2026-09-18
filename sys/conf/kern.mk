@@ -48,6 +48,9 @@ CWARNEXTRA?=	-Wno-error=tautological-compare -Wno-error=empty-body \
 		-Wno-error=pointer-sign
 CWARNEXTRA+=	-Wno-error=shift-negative-value
 CWARNEXTRA+=	-Wno-address-of-packed-member
+.if ${COMPILER_VERSION} >= 230000
+CWARNEXTRA+=	-Wno-error=unused-but-set-global
+.endif
 .endif	# clang
 
 .if ${COMPILER_TYPE} == "gcc"
@@ -166,7 +169,7 @@ INLINE_LIMIT?=	8000
 # code model as "medium" and "medany" respectively.
 #
 .if ${MACHINE_CPUARCH} == "riscv"
-CFLAGS+=	-march=rv64imafdch_zifencei
+CFLAGS+=	-march=rv64imafdch_zifencei_svinval
 CFLAGS+=	-mabi=lp64
 CFLAGS.clang+=	-mcmodel=medium
 CFLAGS.gcc+=	-mcmodel=medany

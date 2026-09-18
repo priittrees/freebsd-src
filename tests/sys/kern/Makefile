@@ -23,6 +23,7 @@ ATF_TESTS_C+=	exterr_test
 ATF_TESTS_C+=	fdgrowtable_test
 ATF_TESTS_C+=	getdirentries_test
 ATF_TESTS_C+=	jail_lookup_root
+ATF_TESTS_C+=	jail_thread
 ATF_TESTS_C+=	jaildesc
 ATF_TESTS_C+=	inotify_test
 ATF_TESTS_C+=	kill_zombie
@@ -40,6 +41,7 @@ ATF_TESTS_C+=	procdesc
 ATF_TESTS_C+=	ptrace_test
 TEST_METADATA.ptrace_test+=		timeout="15"
 ATF_TESTS_C+=	reaper
+ATF_TESTS_C+=	resolve_beneath_test
 ATF_TESTS_C+=	sched_affinity
 ATF_TESTS_C+=	shutdown_dgram
 ATF_TESTS_C+=	sigaltstack
@@ -61,6 +63,7 @@ LIBADD.timerfd+=	pthread
 # One test modifies the system time.
 TEST_METADATA.timerfd+=	is_exclusive="true"
 ATF_TESTS_C+=	tty_pts
+ATF_TESTS_C+=	unix_connectat
 ATF_TESTS_C+=	unix_dgram
 ATF_TESTS_C+=	unix_passfd_dgram
 TEST_METADATA.unix_passfd_dgram+=	is_exclusive="true"
@@ -90,11 +93,12 @@ ${PACKAGE}FILESMODE_sonewconn_overflow.py=0555
 BINDIR=		${TESTSDIR}
 PROGS+=		coredump_phnum_helper
 PROGS+=		pdeathsig_helper
-PROGS+=		sendfile_helper
 
+CFLAGS.aslr+=				-I${SRCTOP}/tests
 LIBADD.aslr+=				util
 LIBADD.copy_file_range+=		md
 LIBADD.jail_lookup_root+=		jail util
+LIBADD.jail_thread+=			jail pthread
 LIBADD.jaildesc+=			kvm pthread
 LIBADD.ssl_sendfile+=			pthread crypto ssl
 CFLAGS.sys_getrandom+=			-I${SRCTOP}/sys/contrib/zstd/lib
@@ -102,6 +106,7 @@ LIBADD.sys_getrandom+=			zstd
 LIBADD.sys_getrandom+=			c
 LIBADD.sys_getrandom+=			pthread
 LIBADD.ptrace_test+=			pthread
+LIBADD.unix_connectat+=			util
 LIBADD.unix_seqpacket_test+=		pthread
 LIBADD.inotify_test+=			util
 LIBADD.kcov+=				pthread
@@ -112,7 +117,6 @@ LIBADD.procdesc+=			kvm pthread
 LIBADD.shutdown_dgram+=			pthread
 LIBADD.socket_msg_waitall+=		pthread
 LIBADD.socket_splice+=			pthread
-LIBADD.sendfile_helper+=		pthread
 LIBADD.fdgrowtable_test+=		util pthread kvm procstat
 LIBADD.sigwait+=			rt
 LIBADD.ktrace_test+=			sysdecode
@@ -126,8 +130,7 @@ NETBSD_ATF_TESTS_C+=	sysv_test
 
 CFLAGS.mqueue_test+=	-I${SRCTOP}/tests
 LIBADD.mqueue_test+=	rt
-
-LIBADD.tty_pts+=	atf_c util
+LIBADD.tty_pts+=	util
 
 ATF_TESTS_C+=	libkern_crc32
 SRCS.libkern_crc32+=	libkern_crc32.c
@@ -150,6 +153,11 @@ SRCS.subr_physmem_test+= subr_physmem_test.c subr_physmem.c
 # static.  So it's ok to disable -Wmissing-prototypes for this program.
 CFLAGS.subr_unit.c+=	-Wno-missing-prototypes
 SRCS.subr_unit_test+=	subr_unit.c
+
+CFLAGS.exterr_test+=	-I${SRCTOP}/tests
+CFLAGS.pdwait+=		-I${SRCTOP}/tests
+CFLAGS.procdesc+=	-I${SRCTOP}/tests
+CFLAGS.ptrace_test+=	-I${SRCTOP}/tests
 
 WARNS?=	3
 

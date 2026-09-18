@@ -989,6 +989,13 @@ socreate(int dom, struct socket **aso, int type, int proto,
 	struct socket *so;
 	int error;
 
+#ifdef COMPAT_FREEBSD15
+	/* divert(4) historically abuses PF_INET.  Use PF_DIVERT instead. */
+	if (__predict_false(dom == PF_INET && type == SOCK_RAW &&
+	    proto == __IPPROTO_DIVERT))
+		dom = PF_DIVERT;
+#endif
+
 	prp = pffindproto(dom, type, proto);
 	if (prp == NULL) {
 		/* No support for domain. */
@@ -3808,8 +3815,9 @@ hhook_run_socket(struct socket *so, void *hctx, int32_t h_id)
  * here, these functions are also called by the protocol-level pr_ctloutput()
  * routines.
  */
-int
-sooptcopyin(struct sockopt *sopt, void *buf, size_t len, size_t minlen)
+static int
+_sooptcopyin(struct sockopt *sopt, void *buf, size_t len, size_t minlen,
+    bool copycaps)
 {
 	size_t	valsize;
 
@@ -3824,12 +3832,33 @@ sooptcopyin(struct sockopt *sopt, void *buf, size_t len, size_t minlen)
 	if (valsize > len)
 		sopt->sopt_valsize = valsize = len;
 
-	if (sopt->sopt_td != NULL)
-		return (copyin(sopt->sopt_val, buf, valsize));
+	if (sopt->sopt_td != NULL) {
+		if (copycaps)
+			return (copyinptr(sopt->sopt_val, buf, valsize));
+		else
+			return (copyin(sopt->sopt_val, buf, valsize));
+	}
 
-	bcopy(sopt->sopt_val, buf, valsize);
+	if (copycaps)
+		memcpy(buf, sopt->sopt_val, valsize);
+	else
+		memcpy_data(buf, sopt->sopt_val, valsize);
 	return (0);
 }
+
+int
+sooptcopyin(struct sockopt *sopt, void *buf, size_t len, size_t minlen)
+{
+	return (_sooptcopyin(sopt, buf, len, minlen, false));
+}
+
+#ifdef __CHERI__
+int
+sooptcopyinptr(struct sockopt *sopt, void *buf, size_t len, size_t minlen)
+{
+	return (_sooptcopyin(sopt, buf, len, minlen, true));
+}
+#endif
 
 /*
  * Kernel version of setsockopt(2).
@@ -4118,7 +4147,7 @@ sooptcopyout(struct sockopt *sopt, const void *buf, size_t len)
 		if (sopt->sopt_td != NULL)
 			error = copyout(buf, sopt->sopt_val, valsize);
 		else
-			bcopy(buf, sopt->sopt_val, valsize);
+			memcpy_data(sopt->sopt_val, buf, valsize);
 	}
 	return (error);
 }
@@ -4429,7 +4458,7 @@ soopt_mcopyin(struct sockopt *sopt, struct mbuf *m)
 				return(error);
 			}
 		} else
-			bcopy(sopt->sopt_val, mtod(m, char *), m->m_len);
+			memcpy(mtod(m, char *), sopt->sopt_val, m->m_len);
 		sopt->sopt_valsize -= m->m_len;
 		sopt->sopt_val = (char *)sopt->sopt_val + m->m_len;
 		m = m->m_next;
@@ -4458,7 +4487,7 @@ soopt_mcopyout(struct sockopt *sopt, struct mbuf *m)
 				return(error);
 			}
 		} else
-			bcopy(mtod(m, char *), sopt->sopt_val, m->m_len);
+			memcpy(sopt->sopt_val, mtod(m, char *), m->m_len);
 		sopt->sopt_valsize -= m->m_len;
 		sopt->sopt_val = (char *)sopt->sopt_val + m->m_len;
 		valsize += m->m_len;
@@ -4929,7 +4958,7 @@ sodupsockaddr(const struct sockaddr *sa, int mflags)
 
 	sa2 = malloc(sa->sa_len, M_SONAME, mflags);
 	if (sa2)
-		bcopy(sa, sa2, sa->sa_len);
+		memcpy(sa2, sa, sa->sa_len);
 	return sa2;
 }
 

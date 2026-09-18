@@ -2,7 +2,9 @@
  * Automatically @generated, use
  * tools/build/make_libc_exterr_cat_filenames.sh
  */
+	[EXTERR_CAT_HWPMC_AMD] = "dev/hwpmc/hwpmc_amd.c",
 	[EXTERR_CAT_HWPMC_IBS] = "dev/hwpmc/hwpmc_ibs.c",
+	[EXTERR_CAT_HWPMC_MOD] = "dev/hwpmc/hwpmc_mod.c",
 	[EXTERR_CAT_VMM] = "dev/vmm/vmm_dev.c",
 	[EXTERR_CAT_FUSE_DEVICE] = "fs/fuse/fuse_device.c",
 	[EXTERR_CAT_FUSE_VFS] = "fs/fuse/fuse_vfsops.c",
@@ -14,6 +16,7 @@
 	[EXTERR_CAT_FORK] = "kern/kern_fork.c",
 	[EXTERR_CAT_LINKER] = "kern/kern_linker.c",
 	[EXTERR_CAT_GENIO] = "kern/sys_generic.c",
+	[EXTERR_CAT_TTY] = "kern/tty.c",
 	[EXTERR_CAT_VFSBIO] = "kern/vfs_bio.c",
 	[EXTERR_CAT_INOTIFY] = "kern/vfs_inotify.c",
 	[EXTERR_CAT_VFSSYSCALL] = "kern/vfs_syscalls.c",

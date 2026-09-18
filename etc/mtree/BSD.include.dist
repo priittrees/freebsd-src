@@ -207,6 +207,8 @@
         ..
         ciss
         ..
+        coreboot
+        ..
         evdev
         ..
         filemon
@@ -258,6 +260,8 @@
         speaker
         ..
         tcp_log
+        ..
+        ufshci
         ..
         usb
         ..
@@ -330,6 +334,8 @@
         union
         ..
         virstor
+        ..
+        zoned
         ..
     ..
     gssapi              tags=package=kerberos-dev

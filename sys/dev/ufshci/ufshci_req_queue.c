@@ -72,6 +72,10 @@ ufshci_utmr_req_queue_construct(struct ufshci_controller *ctrlr)
 void
 ufshci_utmr_req_queue_destroy(struct ufshci_controller *ctrlr)
 {
+	/* Attach may fail before the queue ops are set up. */
+	if (ctrlr->task_mgmt_req_queue.qops.destroy == NULL)
+		return;
+
 	ctrlr->task_mgmt_req_queue.qops.destroy(ctrlr,
 	    &ctrlr->task_mgmt_req_queue);
 }
@@ -114,6 +118,10 @@ ufshci_utr_req_queue_construct(struct ufshci_controller *ctrlr)
 void
 ufshci_utr_req_queue_destroy(struct ufshci_controller *ctrlr)
 {
+	/* Attach may fail before the queue ops are set up. */
+	if (ctrlr->transfer_req_queue.qops.destroy == NULL)
+		return;
+
 	ctrlr->transfer_req_queue.qops.destroy(ctrlr,
 	    &ctrlr->transfer_req_queue);
 }
@@ -160,41 +168,32 @@ static void
 ufshci_req_queue_manual_complete_tracker(struct ufshci_tracker *tr, uint8_t ocs,
     uint8_t rc)
 {
-	struct ufshci_utp_xfer_req_desc *desc;
+	struct ufshci_req_queue *req_queue = tr->req_queue;
+	struct ufshci_hw_queue *hwq = tr->hwq;
 	struct ufshci_upiu_header *resp_header;
 
-	mtx_assert(&tr->hwq->qlock, MA_NOTOWNED);
+	mtx_assert(&hwq->qlock, MA_NOTOWNED);
 
-	resp_header = (struct ufshci_upiu_header *)tr->ucd->response_upiu;
+	/*
+	 * Write the fake response where the completion path reads it.
+	 */
+	if (req_queue->is_task_mgmt) {
+		resp_header = (struct ufshci_upiu_header *)
+		    hwq->utmrd[tr->slot_num].response_upiu;
+		hwq->utmrd[tr->slot_num].overall_command_status = ocs;
+	} else {
+		resp_header = (struct ufshci_upiu_header *)
+		    tr->ucd->response_upiu;
+		hwq->utrd[tr->slot_num].overall_command_status = ocs;
+	}
 	resp_header->response = rc;
-
-	desc = &tr->hwq->utrd[tr->slot_num];
-	desc->overall_command_status = ocs;
+	/*
+	 * The hardware never wrote a response. Copy the task tag from
+	 * the request so the completion checks pass.
+	 */
+	resp_header->task_tag = tr->req->request_upiu.header.task_tag;
 
 	ufshci_req_queue_complete_tracker(tr);
-}
-
-static void
-ufshci_req_queue_manual_complete_request(struct ufshci_req_queue *req_queue,
-    struct ufshci_request *req, uint8_t ocs, uint8_t rc)
-{
-	struct ufshci_completion cpl;
-	bool error;
-
-	memset(&cpl, 0, sizeof(cpl));
-	cpl.response_upiu.header.response = rc;
-	error = ufshci_req_queue_response_is_error(req_queue, ocs,
-	    &cpl.response_upiu);
-
-	if (error) {
-		ufshci_printf(req_queue->ctrlr,
-		    "Manual complete request error:0x%x", error);
-	}
-
-	if (req->cb_fn)
-		req->cb_fn(req->cb_arg, &cpl, error);
-
-	ufshci_free_request(req);
 }
 
 void
@@ -213,23 +212,26 @@ ufshci_req_queue_fail(struct ufshci_controller *ctrlr,
 	for (i = 0; i < req_queue->num_trackers; i++) {
 		tr = hwq->act_tr[i];
 
-		if (tr->slot_state == UFSHCI_SLOT_STATE_RESERVED) {
-			mtx_unlock(&hwq->qlock);
-			ufshci_req_queue_manual_complete_request(req_queue,
-			    tr->req, UFSHCI_DESC_ABORTED,
-			    UFSHCI_RESPONSE_CODE_GENERAL_FAILURE);
-			mtx_lock(&hwq->qlock);
-		} else if (tr->slot_state == UFSHCI_SLOT_STATE_SCHEDULED) {
-			/*
-			 * Do not remove the tracker. The abort_tracker path
-			 * will do that for us.
-			 */
-			mtx_unlock(&hwq->qlock);
-			ufshci_req_queue_manual_complete_tracker(tr,
-			    UFSHCI_DESC_ABORTED,
-			    UFSHCI_RESPONSE_CODE_GENERAL_FAILURE);
-			mtx_lock(&hwq->qlock);
-		}
+		/*
+		 * A slot in UFSHCI_SLOT_STATE_RESERVED is visible here
+		 * only while its submit thread is failing a PRDT setup.
+		 * That thread completes the request, so leave the slot
+		 * alone.
+		 */
+		if (tr->slot_state != UFSHCI_SLOT_STATE_SCHEDULED)
+			continue;
+
+		/*
+		 * Claim the tracker under the lock. The completion
+		 * scan only completes SCHEDULED slots, so it will
+		 * skip this one while the lock is dropped.
+		 */
+		tr->slot_state = UFSHCI_SLOT_STATE_NEED_ERROR_HANDLING;
+		mtx_unlock(&hwq->qlock);
+		ufshci_req_queue_manual_complete_tracker(tr,
+		    UFSHCI_DESC_ABORTED,
+		    UFSHCI_RESPONSE_CODE_GENERAL_FAILURE);
+		mtx_lock(&hwq->qlock);
 	}
 
 	mtx_unlock(&hwq->qlock);
@@ -268,8 +270,8 @@ ufshci_req_queue_complete_tracker(struct ufshci_tracker *tr)
 	error = ufshci_req_queue_response_is_error(req_queue, ocs,
 	    &cpl.response_upiu);
 
-	/* Retry for admin commands */
-	retriable = req->is_admin;
+	/* Retry for admin commands. A failed controller must not retry. */
+	retriable = req->is_admin && !req_queue->ctrlr->is_failed;
 	retry = error && retriable &&
 	    req->retries < req_queue->ctrlr->retry_count;
 	if (retry)
@@ -371,7 +373,7 @@ ufshci_payload_map(void *arg, bus_dma_segment_t *seg, int nseg, int error)
 	    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 }
 
-static void
+static int
 ufshci_req_queue_prepare_prdt(struct ufshci_tracker *tr)
 {
 	struct ufshci_request *req = tr->req;
@@ -403,6 +405,8 @@ ufshci_req_queue_prepare_prdt(struct ufshci_tracker *tr)
 		    UFSHCI_RESPONSE_CODE_GENERAL_FAILURE);
 		mtx_lock(&tr->hwq->qlock);
 	}
+
+	return (error);
 }
 
 static void
@@ -421,7 +425,7 @@ static void
 ufshci_req_queue_fill_utr_descriptor(struct ufshci_utp_xfer_req_desc *desc,
     uint8_t data_direction, const uint64_t paddr, const uint16_t response_off,
     const uint16_t response_len, const uint16_t prdt_off,
-    const uint16_t prdt_entry_cnt)
+    const uint16_t prdt_entry_cnt, const uint8_t total_ehs_length)
 {
 	uint8_t command_type;
 	/* Value to convert bytes to dwords */
@@ -437,6 +441,7 @@ ufshci_req_queue_fill_utr_descriptor(struct ufshci_utp_xfer_req_desc *desc,
 	desc->command_type = command_type;
 	desc->data_direction = data_direction;
 	desc->interrupt = true;
+	desc->total_ehs_length = total_ehs_length;
 	/* Set the initial value to Invalid. */
 	desc->overall_command_status = UFSHCI_UTR_OCS_INVALID;
 	desc->utp_command_descriptor_base_address = (uint32_t)(paddr &
@@ -474,6 +479,7 @@ ufshci_abort_complete(void *arg, const struct ufshci_completion *status,
     bool error)
 {
 	struct ufshci_tracker *tr = arg;
+	uint32_t output_param1;
 
 	/*
 	 * We still need to check the active tracker array, to cover race where
@@ -498,12 +504,12 @@ ufshci_abort_complete(void *arg, const struct ufshci_completion *status,
 		ufshci_req_queue_manual_complete_tracker(tr,
 		    UFSHCI_DESC_ABORTED, UFSHCI_RESPONSE_CODE_GENERAL_FAILURE);
 
-		if ((status->response_upiu.task_mgmt_response_upiu
-			    .output_param1 ==
-			UFSHCI_TASK_MGMT_SERVICE_RESPONSE_FUNCTION_COMPLETE) ||
-		    (status->response_upiu.task_mgmt_response_upiu
-			    .output_param1 ==
-			UFSHCI_TASK_MGMT_SERVICE_RESPONSE_FUNCTION_SUCCEEDED)) {
+		output_param1 = be32toh(
+		    status->response_upiu.task_mgmt_response_upiu.output_param1);
+		if (output_param1 ==
+			UFSHCI_TASK_MGMT_SERVICE_RESPONSE_FUNCTION_COMPLETE ||
+		    output_param1 ==
+			UFSHCI_TASK_MGMT_SERVICE_RESPONSE_FUNCTION_SUCCEEDED) {
 			ufshci_printf(tr->hwq->ctrlr,
 			    "Warning: the abort task request completed \
 			    successfully, but the original task is still incomplete.");
@@ -630,11 +636,17 @@ ufshci_req_queue_timeout(void *arg)
 				ufshci_printf(ctrlr,
 				    "Recovery step 1: Timeout occurred. aborting the task(%d).\n",
 				    tr->req->request_upiu.header.task_tag);
-				ufshci_ctrlr_cmd_send_task_mgmt_request(ctrlr,
-				    ufshci_abort_complete, tr,
-				    UFSHCI_TASK_MGMT_FUNCTION_ABORT_TASK,
-				    tr->req->request_upiu.header.lun,
-				    tr->req->request_upiu.header.task_tag, 0);
+				if (ufshci_ctrlr_cmd_send_task_mgmt_request(ctrlr,
+					ufshci_abort_complete, tr,
+					UFSHCI_TASK_MGMT_FUNCTION_ABORT_TASK,
+					tr->req->request_upiu.header.lun,
+					tr->req->request_upiu.header.task_tag,
+					0) != 0) {
+					ufshci_req_queue_timeout_recovery(ctrlr,
+					    hwq);
+					idle = false;
+					break;
+				}
 			} else {
 				/* Recovery Step 2-5 */
 				ufshci_req_queue_timeout_recovery(ctrlr, hwq);
@@ -708,6 +720,9 @@ ufshci_req_queue_submit_tracker(struct ufshci_req_queue *req_queue,
 		ufshci_req_queue_fill_utmr_descriptor(&tr->hwq->utmrd[slot_num],
 		    req);
 	} else {
+		KASSERT(req->request_size <= UFSHCI_UTP_XFER_REQ_SIZE &&
+		    req->response_size <= UFSHCI_UTP_XFER_RESP_SIZE,
+		    ("UPIU does not fit in the UTP command descriptor"));
 		request_len = req->request_size;
 		response_off = UFSHCI_UTP_XFER_REQ_SIZE;
 		response_len = req->response_size;
@@ -716,15 +731,22 @@ ufshci_req_queue_submit_tracker(struct ufshci_req_queue *req_queue,
 		memcpy(tr->ucd, &req->request_upiu, request_len);
 		memset((uint8_t *)tr->ucd + response_off, 0, response_len);
 
-		/* Prepare PRDT */
-		if (req->payload_valid)
-			ufshci_req_queue_prepare_prdt(tr);
+		/*
+		 * Prepare PRDT. If the payload could not be mapped, the
+		 * tracker has already been completed and released by the
+		 * manual completion path, so the descriptor must not be
+		 * built and the doorbell must not be rung.
+		 */
+		if (req->payload_valid &&
+		    ufshci_req_queue_prepare_prdt(tr) != 0)
+			return;
 
 		/* Prepare UTP Transfer Request Descriptor. */
 		ucd_paddr = tr->ucd_bus_addr;
 		ufshci_req_queue_fill_utr_descriptor(&tr->hwq->utrd[slot_num],
 		    data_direction, ucd_paddr, response_off, response_len,
-		    tr->prdt_off, tr->prdt_entry_cnt);
+		    tr->prdt_off, tr->prdt_entry_cnt,
+		    req->request_upiu.header.ehs_length);
 
 		bus_dmamap_sync(req_queue->dma_tag_ucd, req_queue->ucdmem_map,
 		    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
@@ -747,6 +769,9 @@ _ufshci_req_queue_submit_request(struct ufshci_req_queue *req_queue,
 	int error;
 
 	mtx_assert(&req_queue->qops.get_hw_queue(req_queue)->qlock, MA_OWNED);
+
+	if (req_queue->ctrlr->is_failed)
+		return (ENXIO);
 
 	error = req_queue->qops.reserve_slot(req_queue, &tr);
 	if (error != 0) {

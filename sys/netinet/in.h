@@ -248,15 +248,14 @@ __END_DECLS
 #define	IPPROTO_RESERVED_253	253		/* Reserved */
 #define	IPPROTO_RESERVED_254	254		/* Reserved */
 /* 255: Reserved */
-/* BSD Private, local use, namespace incursion, no longer used */
-#define	IPPROTO_OLD_DIVERT	254		/* OLD divert pseudo-proto */
 #define	IPPROTO_MAX		256
 
 /* last return value of *_input(), meaning "all job for this pkt is done".  */
 #define	IPPROTO_DONE		257
 
+#define __IPPROTO_DIVERT	258		/* Deprecated, use PF_DIVERT */
+
 /* Only used internally, so can be outside the range of valid IP protocols. */
-#define	IPPROTO_DIVERT		258		/* divert pseudo-protocol */
 #define	IPPROTO_SEND		259		/* SeND pseudo-protocol */
 
 /*
@@ -680,6 +679,7 @@ bool	 in_localip(struct in_addr);
 bool	 in_localip_fib(struct in_addr, uint16_t);
 bool	 in_ifhasaddr(struct ifnet *, struct in_addr);
 struct in_ifaddr *in_findlocal(uint32_t, bool);
+struct in_ifaddr *in_ifprimaryaddr(struct ifnet *);
 int	 inet_aton(const char *, struct in_addr *); /* in libkern */
 char	*inet_ntoa_r(struct in_addr ina, char *buf); /* in libkern */
 char	*inet_ntop(int, const void *, char *, socklen_t); /* in libkern */

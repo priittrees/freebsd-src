@@ -87,6 +87,7 @@
 #include <sys/systm.h>
 #include <sys/kernel.h>
 #include <sys/kerneldump.h>
+#include <sys/limits.h>
 #include <sys/linker.h>
 #include <sys/msgbuf.h>
 #include <sys/lock.h>
@@ -204,8 +205,11 @@ extern int elf32_nxstack;
 /* TLB and TID handling */
 /**************************************************************************/
 
-/* Translation ID busy table */
-static volatile pmap_t tidbusy[MAXCPU][TID_MAX + 1];
+/* Translation ID busy table (dynamically allocated) */
+static __inline void tid_set_busy(int cpu, int tid, pmap_t pmap);
+static __inline pmap_t tid_get_busy(int cpu, int tid);
+static volatile pmap_t *tidbusy;
+uint32_t tid_max;
 
 /*
  * TLB0 capabilities (entry, way numbers etc.). These can vary between e500
@@ -356,6 +360,9 @@ static int		mmu_booke_decode_kernel_ptr(vm_offset_t addr,
 static void		mmu_booke_page_array_startup(long);
 static bool mmu_booke_page_is_mapped(vm_page_t m);
 static bool mmu_booke_ps_enabled(pmap_t pmap);
+#ifdef __powerpc64__
+static int		mmu_booke_growkernel(vm_offset_t);
+#endif
 
 static struct pmap_funcs mmu_booke_methods = {
 	/* pmap dispatcher interface */
@@ -399,6 +406,9 @@ static struct pmap_funcs mmu_booke_methods = {
 	.page_array_startup = mmu_booke_page_array_startup,
 	.page_is_mapped = mmu_booke_page_is_mapped,
 	.ps_enabled = mmu_booke_ps_enabled,
+#ifdef __powerpc64__
+	.growkernel_nopanic = mmu_booke_growkernel,
+#endif
 
 	/* Internal interfaces */
 	.bootstrap = mmu_booke_bootstrap,
@@ -637,6 +647,7 @@ mmu_booke_bootstrap(vm_offset_t start, vm_offset_t kernelend)
 	vm_size_t kstack0_sz;
 	vm_paddr_t kstack0_phys;
 	vm_offset_t kstack0;
+	uint32_t tid_bits;
 	void *dpcpu;
 
 	debugf("mmu_booke_bootstrap: entered\n");
@@ -661,12 +672,31 @@ mmu_booke_bootstrap(vm_offset_t start, vm_offset_t kernelend)
 	tlb0_get_tlbconf();
 
 	/*
+	 * Calculate the max TID from the hardware.  Allow overriding with a
+	 * tunable.  The tunable should be a power of 2.
+	 */
+	tid_bits = ((mfspr(SPR_MMUCFG) & MMUCFG_PIDSIZE_M) >> MMUCFG_PIDSIZE_S);
+	if (tid_bits == 0)
+		tid_bits = 7;
+	TUNABLE_INT_FETCH("machdep.tid_max", &tid_max);
+	if (tid_max <= 0)
+		tid_max = INT_MAX;
+	else
+		tid_max = 1 << ilog2(tid_max);
+	tid_max = min((1 << (tid_bits + 1)), tid_max) - 1;
+
+	/*
 	 * Align kernel start and end address (kernel image).
 	 * Note that kernel end does not necessarily relate to kernsize.
 	 * kernsize is the size of the kernel that is actually mapped.
 	 */
 	data_start = round_page(kernelend);
 	data_end = data_start;
+
+	tidbusy = (void *)data_end;
+	printf("tidbusy at %p\n", tidbusy);
+	printf("tidmax = %d\n", tid_max);
+	data_end += round_page(sizeof(pmap_t) * MAXCPU * (tid_max + 1));
 
 	/* Allocate the dynamic per-cpu area. */
 	dpcpu = (void *)data_end;
@@ -679,7 +709,6 @@ mmu_booke_bootstrap(vm_offset_t start, vm_offset_t kernelend)
 	    (uintptr_t)msgbufp, data_end);
 
 	data_end = round_page(data_end);
-	data_end = round_page(mmu_booke_alloc_kernel_pgtables(data_end));
 
 	/* Retrieve phys/avail mem regions */
 	mem_regions(&physmem_regions, &physmem_regions_sz,
@@ -688,7 +717,6 @@ mmu_booke_bootstrap(vm_offset_t start, vm_offset_t kernelend)
 	if (PHYS_AVAIL_ENTRIES < availmem_regions_sz)
 		panic("mmu_booke_bootstrap: phys_avail too small");
 
-	data_end = round_page(data_end);
 	vm_page_array = (vm_page_t)data_end;
 	/*
 	 * Get a rough idea (upper bound) on the size of the page array.  The
@@ -701,6 +729,14 @@ mmu_booke_bootstrap(vm_offset_t start, vm_offset_t kernelend)
 	}
 	sz = (round_page(sz) / (PAGE_SIZE + sizeof(struct vm_page)));
 	data_end += round_page(sz * sizeof(struct vm_page));
+
+	/*
+	 * Reserve kernel page-table pages last, so their reservation size can
+	 * be computed from the final bootstrap data_end (on 64-bit, only leaf
+	 * ptbls covering [VM_MIN_KERNEL_ADDRESS, data_end + slack] are
+	 * pre-allocated; the rest are added on demand by pmap_growkernel()).
+	 */
+	data_end = round_page(mmu_booke_alloc_kernel_pgtables(data_end));
 
 	/* Pre-round up to 1MB.  This wastes some space, but saves TLB entries */
 	data_end = roundup2(data_end, 1 << 20);
@@ -913,7 +949,7 @@ mmu_booke_bootstrap(vm_offset_t start, vm_offset_t kernelend)
 		kernel_pmap->pm_tid[i] = TID_KERNEL;
 		
 		/* Initialize each CPU's tidbusy entry 0 with kernel_pmap */
-		tidbusy[i][TID_KERNEL] = kernel_pmap;
+		tid_set_busy(i, TID_KERNEL, kernel_pmap);
 	}
 
 	/* Mark kernel_pmap active on all CPUs */
@@ -1087,11 +1123,7 @@ mmu_booke_init(void)
 	/* Pre-fill pvzone with initial number of pv entries. */
 	uma_prealloc(pvzone, PV_ENTRY_ZONE_MIN);
 
-	/* Create a UMA zone for page table roots. */
-	ptbl_root_zone = uma_zcreate("pmap root", PMAP_ROOT_SIZE,
-	    NULL, NULL, NULL, NULL, UMA_ALIGN_CACHE, UMA_ZONE_VM);
-
-	/* Initialize ptbl allocation. */
+	/* Initialize ptbl allocation, including the page table root zone. */
 	ptbl_init();
 }
 
@@ -1195,7 +1227,7 @@ mmu_booke_kremove(vm_offset_t va)
 
 	pte = pte_find(kernel_pmap, va);
 
-	if (!PTE_ISVALID(pte)) {
+	if (pte == NULL || !PTE_ISVALID(pte)) {
 		CTR1(KTR_PMAP, "%s: invalid pte", __func__);
 
 		return;
@@ -1616,7 +1648,12 @@ mmu_booke_activate(struct thread *td)
 	CPU_SET_ATOMIC(cpuid, &pmap->pm_active);
 	PCPU_SET(curpmap, pmap);
 
-	if (pmap->pm_tid[cpuid] == TID_NONE)
+	/*
+	 * pm_tid is only a hint: another pmap may have stolen the TID since we
+	 * last ran here, in which case tidbusy[] no longer names us.
+	 */
+	if (pmap->pm_tid[cpuid] == TID_NONE ||
+	    tid_get_busy(cpuid, pmap->pm_tid[cpuid]) != pmap)
 		tid_alloc(pmap);
 
 	/* Load PID0 register with pmap tid value. */
@@ -2461,6 +2498,23 @@ mmu_booke_page_array_startup(long pages)
 /**************************************************************************/
 
 /*
+ * tidbusy[] is the authoritative record of TID ownership; pm_tid is only a
+ * hint, validated against it by mmu_booke_activate().  Only the pointer
+ * matters, it's never dereferenced.
+ */
+static __inline void
+tid_set_busy(int cpu, int tid, pmap_t pmap)
+{
+	tidbusy[cpu * (tid_max + 1) + tid] = pmap;
+}
+
+static __inline pmap_t
+tid_get_busy(int cpu, int tid)
+{
+	return (tidbusy[cpu * (tid_max + 1) + tid]);
+}
+
+/*
  * Allocate a TID. If necessary, steal one from someone else.
  * The new TID is flushed from the TLB before returning.
  */
@@ -2477,21 +2531,22 @@ tid_alloc(pmap_t pmap)
 	thiscpu = PCPU_GET(cpuid);
 
 	tid = PCPU_GET(booke.tid_next);
-	if (tid > TID_MAX)
+	/* tid_max is always a power-of-2-minus-1, so check for overflow. */
+	if ((tid & ~tid_max) != 0)
 		tid = TID_MIN;
 	PCPU_SET(booke.tid_next, tid + 1);
 
-	/* If we are stealing TID then clear the relevant pmap's field */
-	if (tidbusy[thiscpu][tid] != NULL) {
+	/*
+	 * If we are stealing the TID, drop the previous owner's translations.
+	 */
+	if (tid_get_busy(thiscpu, tid) != NULL) {
 		CTR2(KTR_PMAP, "%s: warning: stealing tid %d", __func__, tid);
-		
-		tidbusy[thiscpu][tid]->pm_tid[thiscpu] = TID_NONE;
 
 		/* Flush all entries from TLB0 matching this TID. */
 		tid_flush(tid);
 	}
 
-	tidbusy[thiscpu][tid] = pmap;
+	tid_set_busy(thiscpu, tid, pmap);
 	pmap->pm_tid[thiscpu] = tid;
 	__asm __volatile("msync; isync");
 

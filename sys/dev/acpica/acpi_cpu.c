@@ -140,9 +140,6 @@ struct acpi_cpu_device {
 
 #define	CPUDEV_DEVICE_ID	"ACPI0007"
 
-/* Knob to disable acpi_cpu devices */
-bool acpi_cpu_disabled = false;
-
 /* Platform hardware resource information. */
 static uint32_t		 cpu_smi_cmd;	/* Value to write to SMI_CMD. */
 static uint8_t		 cpu_cst_cnt;	/* Indicate we are _CST aware. */
@@ -166,6 +163,8 @@ static int	acpi_cpu_suspend(device_t dev);
 static int	acpi_cpu_resume(device_t dev);
 static int	acpi_pcpu_get_id(device_t dev, uint32_t acpi_id,
 		    u_int *cpu_id);
+static void	acpi_cpu_madt_handler(ACPI_SUBTABLE_HEADER *entry, void *arg);
+static bool	acpi_cpu_enabled_in_madt(uint32_t acpi_id);
 static struct resource_list *acpi_cpu_get_rlist(device_t dev, device_t child);
 static device_t	acpi_cpu_add_child(device_t dev, u_int order, const char *name,
 		    int unit);
@@ -239,7 +238,7 @@ acpi_cpu_probe(device_t dev)
     ACPI_STATUS		   status;
     ACPI_OBJECT_TYPE	   type;
 
-    if (acpi_disabled("cpu") || acpi_cpu_disabled)
+    if (acpi_disabled("cpu"))
 	return (ENXIO);
     type = acpi_get_type(dev);
     if (type != ACPI_TYPE_PROCESSOR && type != ACPI_TYPE_DEVICE)
@@ -287,9 +286,10 @@ acpi_cpu_probe(device_t dev)
 	}
     }
     if (acpi_pcpu_get_id(dev, acpi_id, &cpu_id) != 0) {
-	if (bootverbose && (type != ACPI_TYPE_PROCESSOR || acpi_id != 255))
-	    printf("ACPI: Processor %s (ACPI ID %u) ignored\n",
-		acpi_name(acpi_get_handle(dev)), acpi_id);
+	if (bootverbose && (type != ACPI_TYPE_PROCESSOR || acpi_id != 255) &&
+	    acpi_cpu_enabled_in_madt(acpi_id))
+	    printf("ACPI: Processor %s (ACPI ID %u) enabled but not online, "
+		"ignored\n", acpi_name(handle), acpi_id);
 	return (ENXIO);
     }
 
@@ -316,7 +316,6 @@ acpi_cpu_attach(device_t dev)
     struct acpi_cpu_softc *sc;
     struct acpi_softc	  *acpi_sc;
     ACPI_STATUS		   status;
-    u_int		   features;
     int			   cpu_id, drv_count, i;
     driver_t 		  **drivers;
     uint32_t		   cap_set[3];
@@ -420,6 +419,8 @@ acpi_cpu_attach(device_t dev)
     if (devclass_get_drivers(device_get_devclass(dev), &drivers,
 	&drv_count) == 0) {
 	for (i = 0; i < drv_count; i++) {
+	    u_int features = 0;
+
 	    if (ACPI_GET_FEATURES(drivers[i], &features) == 0)
 		sc->cpu_features |= features;
 	}
@@ -584,6 +585,62 @@ acpi_pcpu_get_id(device_t dev, uint32_t acpi_id, u_int *cpu_id)
     }
 
     return (ESRCH);
+}
+
+struct acpi_cpu_madt_check {
+    uint32_t	acpi_id;
+    bool	enabled;
+};
+
+static void
+acpi_cpu_madt_handler(ACPI_SUBTABLE_HEADER *entry, void *arg)
+{
+    struct acpi_cpu_madt_check *check = arg;
+    uint32_t id, flags;
+
+    switch (entry->Type) {
+    case ACPI_MADT_TYPE_LOCAL_APIC:
+	id = ((ACPI_MADT_LOCAL_APIC *)entry)->ProcessorId;
+	flags = ((ACPI_MADT_LOCAL_APIC *)entry)->LapicFlags;
+	break;
+    case ACPI_MADT_TYPE_LOCAL_X2APIC:
+	id = ((ACPI_MADT_LOCAL_X2APIC *)entry)->Uid;
+	flags = ((ACPI_MADT_LOCAL_X2APIC *)entry)->LapicFlags;
+	break;
+    case ACPI_MADT_TYPE_GENERIC_INTERRUPT:
+	id = ((ACPI_MADT_GENERIC_INTERRUPT *)entry)->Uid;
+	flags = ((ACPI_MADT_GENERIC_INTERRUPT *)entry)->Flags;
+	break;
+    case ACPI_MADT_TYPE_RINTC:
+	id = ((ACPI_MADT_RINTC *)entry)->Uid;
+	flags = ((ACPI_MADT_RINTC *)entry)->Flags;
+	break;
+    default:
+	return;
+    }
+    if (id == check->acpi_id && (flags & ACPI_MADT_ENABLED) != 0)
+	check->enabled = true;
+}
+
+static bool
+acpi_cpu_enabled_in_madt(uint32_t acpi_id)
+{
+    static ACPI_TABLE_MADT *madt;
+    struct acpi_cpu_madt_check check = {
+	.acpi_id = acpi_id,
+    };
+    ACPI_TABLE_HEADER *hdr;
+
+    if (madt == NULL) {
+	if (ACPI_FAILURE(AcpiGetTable(ACPI_SIG_MADT, 1, &hdr)))
+	    return (false);
+	madt = (ACPI_TABLE_MADT *)hdr;
+	/* Retain the table reference for subsequent processor probes. */
+    }
+
+    acpi_walk_subtables(madt + 1,
+	(char *)madt + madt->Header.Length, acpi_cpu_madt_handler, &check);
+    return (check.enabled);
 }
 
 static struct resource_list *

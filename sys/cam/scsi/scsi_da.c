@@ -72,6 +72,10 @@
 #include <cam/scsi/scsi_da.h>
 
 #ifdef _KERNEL
+/* SDT Probes */
+SDT_PROBE_DEFINE3(cam, , da, error, "union ccb *", "uint32_t", "uint32_t");
+SDT_PROBE_DEFINE2(cam, , da, recovery, "union ccb *", "int");
+
 /*
  * Note that there are probe ordering dependencies here.  The order isn't
  * controlled by this enumeration, but by explicit state transitions in
@@ -5106,7 +5110,7 @@ dadone_proberc(struct cam_periph *periph, union ccb *done_ccb)
 			 */
 			if ((have_sense)
 			 && (asc != 0x25) && (asc != 0x44)
-			 && (asc != 0x04 && ascq != 0x02)
+			 && (asc != 0x04 || ascq != 0x02)
 			 && (error_code == SSD_CURRENT_ERROR
 			  || error_code == SSD_DESC_CURRENT_ERROR)) {
 				const char *sense_key_desc;
@@ -5140,6 +5144,12 @@ dadone_proberc(struct cam_periph *periph, union ccb *done_ccb)
 		}
 	}
 	free(csio->data_ptr, M_SCSIDA);
+
+	if ((periph->flags & CAM_PERIPH_INVALID) != 0) {
+		daprobedone(periph, done_ccb);
+		return;
+	}
+
 	if (announce_buf != NULL &&
 	    ((softc->flags & DA_FLAG_ANNOUNCED) == 0)) {
 		struct sbuf sb;
@@ -5461,24 +5471,27 @@ dadone_probecache(struct cam_periph *periph, union ccb *done_ccb)
 		 */
 		if (sense_hdr->data_length + 1 <
 		    sense_hdr->blk_desc_len + sizeof(*cache_page)) {
-			xpt_print(done_ccb->ccb_h.path,
-		"CACHE PAGE TOO SHORT data len %d desc len %d\n",
-			    sense_hdr->data_length,
-			    sense_hdr->blk_desc_len);
+			if (bootverbose)
+				xpt_print(done_ccb->ccb_h.path,
+			    "CACHE PAGE TOO SHORT data len %d desc len %d\n",
+				    sense_hdr->data_length,
+				    sense_hdr->blk_desc_len);
 			goto bad;
 		}
 		if ((cache_page->page_code & ~SMS_PAGE_CTRL_MASK) !=
 		    SMS_CACHE_PAGE) {
-			xpt_print(done_ccb->ccb_h.path,
-			    "Bad cache page %#x\n",
-			    cache_page->page_code);
+			if (bootverbose)
+				xpt_print(done_ccb->ccb_h.path,
+				    "Bad cache page %#x\n",
+				    cache_page->page_code);
 			goto bad;
 		}
 		if (cache_page->page_length != sizeof(*cache_page) -
 			offsetof(struct scsi_caching_page, flags1)) {
-			xpt_print(done_ccb->ccb_h.path,
-			    "CACHE PAGE length bogus %#x\n",
-			    cache_page->page_length);
+			if (bootverbose)
+				xpt_print(done_ccb->ccb_h.path,
+				    "CACHE PAGE length bogus %#x\n",
+				    cache_page->page_length);
 			goto bad;
 		}
 		/*
@@ -5495,7 +5508,8 @@ dadone_probecache(struct cam_periph *periph, union ccb *done_ccb)
 		 */
 		if (softc->quirks & DA_Q_NO_SYNC_CACHE &&
 			cache_page->flags1 & SCP_WCE)
-			xpt_print(done_ccb->ccb_h.path,
+			if (bootverbose)
+				xpt_print(done_ccb->ccb_h.path,
     "Devices quirked NO_SYNC_CACHE, but WCE=1 enabling write cache.\n");
 	} else {
 		int error, error_code, sense_key, asc, ascq;
@@ -5536,8 +5550,9 @@ dadone_probecache(struct cam_periph *periph, union ccb *done_ccb)
 						 /*getcount_only*/0);
 			}
 		}
-		xpt_print(done_ccb->ccb_h.path,
-		    "MODE SENSE for CACHE page command failed.\n");
+		if (bootverbose)
+			xpt_print(done_ccb->ccb_h.path,
+			    "MODE SENSE for CACHE page command failed.\n");
 
 		/*
 		 * There's no cache page, the command wasn't
@@ -5549,10 +5564,12 @@ dadone_probecache(struct cam_periph *periph, union ccb *done_ccb)
 		 */
 		if (mark_bad) {
 bad:
-			xpt_print(done_ccb->ccb_h.path,
+			if (bootverbose)
+				xpt_print(done_ccb->ccb_h.path,
 			    "Mode page 8 missing, disabling SYNCHRONIZE CACHE\n");
 			if (softc->quirks & DA_Q_NO_SYNC_CACHE)
-				xpt_print(done_ccb->ccb_h.path,
+				if (bootverbose)
+					xpt_print(done_ccb->ccb_h.path,
     "Devices already quirked for NO_SYNC_CACHE, maybe remove quirk table\n");
 			softc->quirks |= DA_Q_NO_SYNC_CACHE;
 			softc->disk->d_flags &= ~DISKFLAG_CANFLUSHCACHE;
@@ -6242,6 +6259,8 @@ daerror(union ccb *ccb, uint32_t cam_flags, uint32_t sense_flags)
 	struct cam_periph *periph;
 	int error, error_code, sense_key, asc, ascq;
 
+	CAM_PROBE3(da, error, ccb, cam_flags, sense_flags);
+
 #if defined(BUF_TRACKING) || defined(FULL_BUF_TRACKING)
 	if (ccb->csio.bio != NULL)
 		biotrack(ccb->csio.bio, __func__);
@@ -6307,8 +6326,10 @@ daerror(union ccb *ccb, uint32_t cam_flags, uint32_t sense_flags)
 			disk_media_gone(softc->disk, M_NOWAIT);
 		}
 	}
-	if (error == ERESTART)
+	if (error == ERESTART) {
+		CAM_PROBE2(da, recovery, ccb, error);
 		return (ERESTART);
+	}
 
 #ifdef CAM_IO_STATS
 	switch (ccb->ccb_h.status & CAM_STATUS_MASK) {
@@ -6338,7 +6359,9 @@ daerror(union ccb *ccb, uint32_t cam_flags, uint32_t sense_flags)
 
 	if (softc->quirks & DA_Q_RETRY_BUSY)
 		sense_flags |= SF_RETRY_BUSY;
-	return(cam_periph_error(ccb, cam_flags, sense_flags));
+	error = cam_periph_error(ccb, cam_flags, sense_flags);
+	CAM_PROBE2(da, recovery, ccb, error);
+	return (error);
 }
 
 static void

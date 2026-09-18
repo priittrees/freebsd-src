@@ -77,20 +77,14 @@ irdma_get_dev_fw_str(struct ib_device *dev,
 }
 
 int
-irdma_add_gid(struct ib_device *device,
-	      u8 port_num,
-	      unsigned int index,
-	      const union ib_gid *gid,
-	      const struct ib_gid_attr *attr,
+irdma_add_gid(const struct ib_gid_attr *attr,
 	      void **context)
 {
 	return 0;
 }
 
 int
-irdma_del_gid(struct ib_device *device,
-	      u8 port_num,
-	      unsigned int index,
+irdma_del_gid(const struct ib_gid_attr *attr,
 	      void **context)
 {
 	return 0;
@@ -527,14 +521,14 @@ irdma_create_ah_wait(struct irdma_pci_f *rf,
 
 static int
 irdma_create_sleepable_ah(struct ib_ah *ib_ah,
-			  struct ib_ah_attr *attr, u32 flags,
+			  struct rdma_ah_attr *attr, u32 flags,
 			  struct ib_udata *udata)
 {
 	struct irdma_pd *pd = to_iwpd(ib_ah->pd);
 	struct irdma_ah *ah = container_of(ib_ah, struct irdma_ah, ibah);
 	struct irdma_device *iwdev = to_iwdev(ib_ah->pd->device);
-	union ib_gid sgid;
-	struct ib_gid_attr sgid_attr;
+	const union ib_gid *sgid;
+	const struct ib_gid_attr *sgid_attr;
 	struct irdma_pci_f *rf = iwdev->rf;
 	struct irdma_sc_ah *sc_ah;
 	u32 ah_id = 0;
@@ -561,24 +555,12 @@ irdma_create_sleepable_ah(struct ib_ah *ib_ah,
 	irdma_sc_init_ah(&rf->sc_dev, sc_ah);
 	ah->sgid_index = attr->grh.sgid_index;
 	memcpy(&ah->dgid, &attr->grh.dgid, sizeof(ah->dgid));
-	rcu_read_lock();
-	err = ib_get_cached_gid(&iwdev->ibdev, attr->port_num,
-				attr->grh.sgid_index, &sgid, &sgid_attr);
-	rcu_read_unlock();
-	if (err) {
-		irdma_debug(&iwdev->rf->sc_dev, IRDMA_DEBUG_VERBS,
-			    "GID lookup at idx=%d with port=%d failed\n",
-			    attr->grh.sgid_index, attr->port_num);
-		err = -EINVAL;
-		goto err_gid_l2;
-	}
-	rdma_gid2ip((struct sockaddr *)&sgid_addr, &sgid);
+	sgid_attr = attr->grh.sgid_attr;
+	sgid = &sgid_attr->gid;
+	rdma_gid2ip((struct sockaddr *)&sgid_addr, sgid);
 	rdma_gid2ip((struct sockaddr *)&dgid_addr, &attr->grh.dgid);
 	ah->av.attrs = *attr;
-	ah->av.net_type = ib_gid_to_network_type(sgid_attr.gid_type, &sgid);
-
-	if (sgid_attr.ndev)
-		dev_put(sgid_attr.ndev);
+	ah->av.net_type = rdma_gid_attr_network_type(sgid_attr);
 
 	ah_info = &sc_ah->ah_info;
 	ah_info->ah_idx = ah_id;
@@ -591,12 +573,12 @@ irdma_create_sleepable_ah(struct ib_ah *ib_ah,
 		ah_info->tc_tos = attr->grh.traffic_class;
 	}
 
-	ether_addr_copy(dmac, attr->dmac);
+	ether_addr_copy(dmac, attr->roce.dmac);
 
-	irdma_fill_ah_info(if_getvnet(iwdev->netdev), ah_info, &sgid_attr, &sgid_addr, &dgid_addr,
+	irdma_fill_ah_info(if_getvnet(iwdev->netdev), ah_info, sgid_attr, &sgid_addr, &dgid_addr,
 			   dmac, ah->av.net_type);
 
-	err = irdma_create_ah_vlan_tag(iwdev, pd, ah_info, &sgid_attr, dmac);
+	err = irdma_create_ah_vlan_tag(iwdev, pd, ah_info, sgid_attr, dmac);
 	if (err)
 		goto err_gid_l2;
 
@@ -639,21 +621,21 @@ err_gid_l2:
  */
 int
 irdma_create_ah(struct ib_ah *ib_ah,
-		struct ib_ah_attr *attr, u32 flags,
+		struct rdma_ah_attr *attr, u32 flags,
 		struct ib_udata *udata)
 {
 	return irdma_create_sleepable_ah(ib_ah, attr, flags, udata);
 }
 
 void
-irdma_ether_copy(u8 *dmac, struct ib_ah_attr *attr)
+irdma_ether_copy(u8 *dmac, struct rdma_ah_attr *attr)
 {
-	ether_addr_copy(dmac, attr->dmac);
+	ether_addr_copy(dmac, attr->roce.dmac);
 }
 
 int
 irdma_create_ah_stub(struct ib_ah *ib_ah,
-		     struct ib_ah_attr *attr, u32 flags,
+		     struct rdma_ah_attr *attr, u32 flags,
 		     struct ib_udata *udata)
 {
 	return -ENOSYS;
@@ -1398,25 +1380,19 @@ int
 kc_irdma_set_roce_cm_info(struct irdma_qp *iwqp, struct ib_qp_attr *attr,
 			  u16 *vlan_id)
 {
-	int ret;
-	union ib_gid sgid;
-	struct ib_gid_attr sgid_attr;
+	const struct ib_gid_attr *sgid_attr;
 	struct irdma_av *av = &iwqp->roce_ah.av;
+	const struct ib_global_route *grh = rdma_ah_read_grh(&attr->ah_attr);
 
-	ret = ib_get_cached_gid(iwqp->ibqp.device, attr->ah_attr.port_num,
-				attr->ah_attr.grh.sgid_index, &sgid,
-				&sgid_attr);
-	if (ret)
-		return ret;
+	sgid_attr = grh->sgid_attr;
 
-	if (sgid_attr.ndev) {
-		*vlan_id = rdma_vlan_dev_vlan_id(sgid_attr.ndev);
-		ether_addr_copy(iwqp->ctx_info.roce_info->mac_addr, if_getlladdr(sgid_attr.ndev));
+	if (sgid_attr->ndev) {
+		*vlan_id = rdma_vlan_dev_vlan_id(sgid_attr->ndev);
+		ether_addr_copy(iwqp->ctx_info.roce_info->mac_addr, if_getlladdr(sgid_attr->ndev));
 	}
 
-	av->net_type = ib_gid_to_network_type(sgid_attr.gid_type, &sgid);
-	rdma_gid2ip((struct sockaddr *)&av->sgid_addr, &sgid);
-	dev_put(sgid_attr.ndev);
+	av->net_type = rdma_gid_attr_network_type(sgid_attr);
+	rdma_gid2ip((struct sockaddr *)&av->sgid_addr, &sgid_attr->gid);
 	iwqp->sc_qp.user_pri = iwqp->ctx_info.user_pri;
 
 	return 0;
@@ -1512,28 +1488,6 @@ void
 ib_unregister_device_put(struct ib_device *device)
 {
 	ib_unregister_device(device);
-}
-
-/**
- * irdma_query_gid_roce - Query port GID for Roce
- * @ibdev: device pointer from stack
- * @port: port number
- * @index: Entry index
- * @gid: Global ID
- */
-int
-irdma_query_gid_roce(struct ib_device *ibdev, u8 port, int index,
-		     union ib_gid *gid)
-{
-	int ret;
-
-	ret = ib_get_cached_gid(ibdev, port, index, gid, NULL);
-	if (ret == -EAGAIN) {
-		memcpy(gid, &zgid, sizeof(*gid));
-		return 0;
-	}
-
-	return ret;
 }
 
 /**
@@ -1772,21 +1726,6 @@ irdma_get_link_layer(struct ib_device *ibdev,
 	return IB_LINK_LAYER_ETHERNET;
 }
 
-inline enum ib_mtu
-ib_mtu_int_to_enum(int mtu)
-{
-	if (mtu >= 4096)
-		return IB_MTU_4096;
-	else if (mtu >= 2048)
-		return IB_MTU_2048;
-	else if (mtu >= 1024)
-		return IB_MTU_1024;
-	else if (mtu >= 512)
-		return IB_MTU_512;
-	else
-		return IB_MTU_256;
-}
-
 inline void
 kc_set_roce_uverbs_cmd_mask(struct irdma_device *iwdev)
 {
@@ -1827,108 +1766,6 @@ kc_set_rdma_uverbs_cmd_mask(struct irdma_device *iwdev)
 
 	if (iwdev->rf->rdma_ver >= IRDMA_GEN_2)
 		iwdev->ibdev.uverbs_ex_cmd_mask |= BIT_ULL(IB_USER_VERBS_EX_CMD_CREATE_CQ);
-}
-
-static void
-ib_get_width_and_speed(u32 netdev_speed, u32 lanes,
-		       u16 *speed, u8 *width)
-{
-	if (!lanes) {
-		if (netdev_speed <= SPEED_1000) {
-			*width = IB_WIDTH_1X;
-			*speed = IB_SPEED_SDR;
-		} else if (netdev_speed <= SPEED_10000) {
-			*width = IB_WIDTH_1X;
-			*speed = IB_SPEED_FDR10;
-		} else if (netdev_speed <= SPEED_20000) {
-			*width = IB_WIDTH_4X;
-			*speed = IB_SPEED_DDR;
-		} else if (netdev_speed <= SPEED_25000) {
-			*width = IB_WIDTH_1X;
-			*speed = IB_SPEED_EDR;
-		} else if (netdev_speed <= SPEED_40000) {
-			*width = IB_WIDTH_4X;
-			*speed = IB_SPEED_FDR10;
-		} else if (netdev_speed <= SPEED_50000) {
-			*width = IB_WIDTH_2X;
-			*speed = IB_SPEED_EDR;
-		} else if (netdev_speed <= SPEED_100000) {
-			*width = IB_WIDTH_4X;
-			*speed = IB_SPEED_EDR;
-		} else if (netdev_speed <= SPEED_200000) {
-			*width = IB_WIDTH_4X;
-			*speed = IB_SPEED_HDR;
-		} else {
-			*width = IB_WIDTH_4X;
-			*speed = IB_SPEED_NDR;
-		}
-
-		return;
-	}
-
-	switch (lanes) {
-	case 1:
-		*width = IB_WIDTH_1X;
-		break;
-	case 2:
-		*width = IB_WIDTH_2X;
-		break;
-	case 4:
-		*width = IB_WIDTH_4X;
-		break;
-	case 8:
-		*width = IB_WIDTH_8X;
-		break;
-	case 12:
-		*width = IB_WIDTH_12X;
-		break;
-	default:
-		*width = IB_WIDTH_1X;
-	}
-
-	switch (netdev_speed / lanes) {
-	case SPEED_2500:
-		*speed = IB_SPEED_SDR;
-		break;
-	case SPEED_5000:
-		*speed = IB_SPEED_DDR;
-		break;
-	case SPEED_10000:
-		*speed = IB_SPEED_FDR10;
-		break;
-	case SPEED_14000:
-		*speed = IB_SPEED_FDR;
-		break;
-	case SPEED_25000:
-		*speed = IB_SPEED_EDR;
-		break;
-	case SPEED_50000:
-		*speed = IB_SPEED_HDR;
-		break;
-	case SPEED_100000:
-		*speed = IB_SPEED_NDR;
-		break;
-	default:
-		*speed = IB_SPEED_SDR;
-	}
-}
-
-int
-ib_get_eth_speed(struct ib_device *ibdev, u32 port_num, u16 *speed, u8 *width)
-{
-	if_t netdev = ibdev->get_netdev(ibdev, port_num);
-	u32 netdev_speed, lanes;
-
-	if (!netdev)
-		return -ENODEV;
-
-	netdev_speed = (u32)if_getbaudrate(netdev);
-	dev_put(netdev);
-	lanes = 0;
-
-	ib_get_width_and_speed(netdev_speed, lanes, speed, width);
-
-	return 0;
 }
 
 u64

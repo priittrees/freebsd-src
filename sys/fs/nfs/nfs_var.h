@@ -169,6 +169,7 @@ int nfsrv_mdscopymr(char *, char *, char *, char *, int *, char *, NFSPROC_T *,
     struct nfsdevice **);
 void nfsrv_marknospc(char *, bool);
 void nfsrv_removedeleg(fhandle_t *, struct nfsrv_descript *, NFSPROC_T *);
+void nfsrv_freestrandedstate(struct nfsrvfh *);
 
 /* nfs_nfsdserv.c */
 int nfsrvd_access(struct nfsrv_descript *, int,
@@ -661,7 +662,7 @@ void nfscl_rellayout(struct nfscllayout *, int);
 struct nfscldevinfo *nfscl_getdevinfo(struct nfsclclient *, uint8_t *,
     struct nfscldevinfo *);
 void nfscl_reldevinfo(struct nfscldevinfo *);
-int nfscl_adddevinfo(struct nfsmount *, struct nfscldevinfo *, int,
+int nfscl_adddevinfo(struct nfsmount *, struct nfscldevinfo *, int, int,
     struct nfsclflayout *);
 void nfscl_freelayout(struct nfscllayout *);
 void nfscl_freeflayout(struct nfsclflayout *);

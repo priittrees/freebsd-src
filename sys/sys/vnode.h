@@ -480,6 +480,8 @@ extern	u_int vn_lock_pair_pause_max;
 #define	VI_MTX(vp)	(&(vp)->v_interlock)
 
 #define	VN_LOCK_AREC(vp)	lockallowrecurse((vp)->v_vnlock)
+#define	VN_LOCK_DREC(vp)	lockdisablerecurse((vp)->v_vnlock)
+#define	VN_LOCK_CANREC(vp)	lockcanrecurse((vp)->v_vnlock)
 #define	VN_LOCK_ASHARE(vp)	lockallowshare((vp)->v_vnlock)
 #define	VN_LOCK_DSHARE(vp)	lockdisableshare((vp)->v_vnlock)
 
@@ -907,6 +909,7 @@ int	vop_stdpathconf(struct vop_pathconf_args *);
 int	vop_stdpoll(struct vop_poll_args *);
 int	vop_stdvptocnp(struct vop_vptocnp_args *ap);
 int	vop_stdvptofh(struct vop_vptofh_args *ap);
+int	vop_stdvput_pair(struct vop_vput_pair_args *ap);
 int	vop_stdunp_bind(struct vop_unp_bind_args *ap);
 int	vop_stdunp_connect(struct vop_unp_connect_args *ap);
 int	vop_stdunp_detach(struct vop_unp_detach_args *ap);

@@ -109,6 +109,25 @@ static int dsp_oss_setsong(struct pcm_channel *wrch, struct pcm_channel *rdch, o
 static int dsp_oss_setname(struct pcm_channel *wrch, struct pcm_channel *rdch, oss_longname_t *name);
 #endif
 
+static uint32_t
+dsp_clamp_fragments(uint32_t maxfrags, uint32_t fragsz, uint32_t maxsize)
+{
+	if (maxfrags == 0)
+		maxfrags = maxsize / fragsz;
+	if (maxfrags < 2)
+		maxfrags = 2;
+	if ((uint64_t)maxfrags * fragsz > maxsize)
+		maxfrags = maxsize / fragsz;
+	return (maxfrags);
+}
+
+static unsigned int
+dsp_low_water(struct pcm_channel *ch, int lw)
+{
+	RANGE(lw, 1, ch->bufsoft->bufsize);
+	return ((unsigned int)lw);
+}
+
 int
 dsp_make_dev(device_t dev)
 {
@@ -127,9 +146,9 @@ dsp_make_dev(device_t dev)
 	devargs.mda_si_drv1 = sc;
 	err = make_dev_s(&devargs, &sc->dsp_dev, "dsp%d", unit);
 	if (err != 0) {
-		device_printf(dev, "failed to create dsp%d: error %d",
+		device_printf(dev, "failed to create dsp%d: error %d\n",
 		    unit, err);
-		return (ENXIO);
+		return (err);
 	}
 
 	return (0);
@@ -142,24 +161,6 @@ dsp_destroy_dev(device_t dev)
 
 	d = device_get_softc(dev);
 	destroy_dev(d->dsp_dev);
-}
-
-static void
-dsp_lock_chans(struct dsp_cdevpriv *priv, uint32_t prio)
-{
-	if (priv->rdch != NULL && DSP_F_READ(prio))
-		CHN_LOCK(priv->rdch);
-	if (priv->wrch != NULL && DSP_F_WRITE(prio))
-		CHN_LOCK(priv->wrch);
-}
-
-static void
-dsp_unlock_chans(struct dsp_cdevpriv *priv, uint32_t prio)
-{
-	if (priv->rdch != NULL && DSP_F_READ(prio))
-		CHN_UNLOCK(priv->rdch);
-	if (priv->wrch != NULL && DSP_F_WRITE(prio))
-		CHN_UNLOCK(priv->wrch);
 }
 
 static int
@@ -185,17 +186,27 @@ dsp_chn_alloc(struct snddev_info *d, struct pcm_channel **ch, int direction,
 	    (direction == PCMDIR_REC && d->flags & SD_F_RVCHANS);
 
 	*ch = NULL;
+
+	/*
+	 * Prefer an idle primary channel, so that devices which provide more
+	 * than one of them use them all, instead of stacking every client on
+	 * the first one.
+	 */
 	CHN_FOREACH(c, d, channels.pcm.primary) {
 		CHN_LOCK(c);
-		if (c->direction != direction) {
-			CHN_UNLOCK(c);
-			continue;
-		}
-		/* Find an available primary channel to use. */
-		if ((c->flags & CHN_F_BUSY) == 0 ||
-		    (vdir_enabled && (c->flags & CHN_F_HAS_VCHAN)))
+		if (c->direction == direction && (c->flags & CHN_F_BUSY) == 0)
 			break;
 		CHN_UNLOCK(c);
+	}
+	/* Fall back to sharing a primary channel that already has vchans. */
+	if (c == NULL && vdir_enabled) {
+		CHN_FOREACH(c, d, channels.pcm.primary) {
+			CHN_LOCK(c);
+			if (c->direction == direction &&
+			    (c->flags & CHN_F_HAS_VCHAN))
+				break;
+			CHN_UNLOCK(c);
+		}
 	}
 	if (c == NULL)
 		return (EBUSY);
@@ -535,14 +546,14 @@ dsp_write(struct cdev *i_dev, struct uio *buf, int flag)
 
 static int
 dsp_ioctl_channel(struct dsp_cdevpriv *priv, struct pcm_channel *ch,
-    u_long cmd, caddr_t arg)
+    unsigned long cmd, caddr_t arg)
 {
 	struct snddev_info *d;
 	struct pcm_channel *rdch, *wrch;
 	int j, left, right, center, mute;
 
 	d = priv->sc;
-	if (!PCM_REGISTERED(d) || !(pcm_getflags(d->dev) & SD_F_VPC))
+	if (!PCM_REGISTERED(d))
 		return (-1);
 
 	PCM_UNLOCKASSERT(d);
@@ -689,13 +700,13 @@ typedef struct audio_errinfo32
 #endif
 
 static int
-dsp_ioctl(struct cdev *i_dev, u_long cmd, caddr_t arg, int mode,
+dsp_ioctl(struct cdev *i_dev, unsigned long cmd, caddr_t arg, int mode,
     struct thread *td)
 {
 	struct dsp_cdevpriv *priv;
     	struct pcm_channel *chn, *rdch, *wrch;
 	struct snddev_info *d;
-	u_long xcmd;
+	unsigned long xcmd;
 	int *arg_i, ret, tmp, err;
 
 	if ((err = devfs_get_cdevpriv((void **)&priv)) != 0)
@@ -788,10 +799,6 @@ dsp_ioctl(struct cdev *i_dev, u_long cmd, caddr_t arg, int mode,
     	case AIONWRITE:	/* how many bytes can write ? */
 		if (wrch) {
 			CHN_LOCK(wrch);
-/*
-		if (wrch && wrch->bufhard.dl)
-			while (chn_wrfeed(wrch) == 0);
-*/
 			*arg_i = sndbuf_getfree(wrch->bufsoft);
 			CHN_UNLOCK(wrch);
 		} else {
@@ -1004,9 +1011,6 @@ dsp_ioctl(struct cdev *i_dev, u_long cmd, caddr_t arg, int mode,
     	case FIONREAD: /* get # bytes to read */
 		if (rdch) {
 			CHN_LOCK(rdch);
-/*			if (rdch && rdch->bufhard.dl)
-				while (chn_rdfeed(rdch) == 0);
-*/
 			*arg_i = sndbuf_getready(rdch->bufsoft);
 			CHN_UNLOCK(rdch);
 		} else {
@@ -1269,18 +1273,13 @@ dsp_ioctl(struct cdev *i_dev, u_long cmd, caddr_t arg, int mode,
 			RANGE(fragln, 4, 16);
 			fragsz = 1 << fragln;
 
-			if (maxfrags == 0)
-				maxfrags = CHN_2NDBUFMAXSIZE / fragsz;
-			if (maxfrags < 2)
-				maxfrags = 2;
-			if (maxfrags * fragsz > CHN_2NDBUFMAXSIZE)
-				maxfrags = CHN_2NDBUFMAXSIZE / fragsz;
-
 			DEB(printf("SNDCTL_DSP_SETFRAGMENT %d frags, %d sz\n", maxfrags, fragsz));
 			PCM_ACQUIRE_QUICK(d);
 		    	if (rdch) {
 				CHN_LOCK(rdch);
-				ret = chn_setblocksize(rdch, maxfrags, fragsz);
+				ret = chn_setblocksize(rdch,
+				    dsp_clamp_fragments(maxfrags, fragsz,
+				    chn_2ndbufmaxsize(rdch)), fragsz);
 				r_maxfrags = rdch->bufsoft->blkcnt;
 				r_fragsz = rdch->bufsoft->blksz;
 				CHN_UNLOCK(rdch);
@@ -1290,7 +1289,9 @@ dsp_ioctl(struct cdev *i_dev, u_long cmd, caddr_t arg, int mode,
 			}
 		    	if (wrch && ret == 0) {
 				CHN_LOCK(wrch);
-				ret = chn_setblocksize(wrch, maxfrags, fragsz);
+				ret = chn_setblocksize(wrch,
+				    dsp_clamp_fragments(maxfrags, fragsz,
+				    chn_2ndbufmaxsize(wrch)), fragsz);
 				maxfrags = wrch->bufsoft->blkcnt;
 				fragsz = wrch->bufsoft->blksz;
 				CHN_UNLOCK(wrch);
@@ -1648,7 +1649,6 @@ dsp_ioctl(struct cdev *i_dev, u_long cmd, caddr_t arg, int mode,
 			ret = EINVAL;
 		else {
 			struct snd_dbuf *bs;
-			/* int tmp; */
 
 			oss_count_t *oc = (oss_count_t *)arg;
 
@@ -1679,12 +1679,12 @@ dsp_ioctl(struct cdev *i_dev, u_long cmd, caddr_t arg, int mode,
 	 */
 		if (wrch != NULL) {
 			CHN_LOCK(wrch);
-			wrch->lw = (*arg_i > 1) ? *arg_i : 1;
+			wrch->lw = dsp_low_water(wrch, *arg_i);
 			CHN_UNLOCK(wrch);
 		}
 		if (rdch != NULL) {
 			CHN_LOCK(rdch);
-			rdch->lw = (*arg_i > 1) ? *arg_i : 1;
+			rdch->lw = dsp_low_water(rdch, *arg_i);
 			CHN_UNLOCK(rdch);
 		}
 		break;
@@ -1973,8 +1973,9 @@ dsp_mmap_single(struct cdev *cdev, vm_ooffset_t *offset,
 	struct dsp_mmap_handle *handle;
 	struct dsp_cdevpriv *priv;
 	struct snddev_info *d;
-	struct pcm_channel *wrch, *rdch, *c;
+	struct pcm_channel *c;
 	int err;
+	bool dealloc;
 
 	if (*offset >= *offset + size)
 		return (EINVAL);
@@ -1987,11 +1988,6 @@ dsp_mmap_single(struct cdev *cdev, vm_ooffset_t *offset,
 	    SV_CURPROC_ABI() != SV_ABI_LINUX)))
 		return (EINVAL);
 
-	/*
-	 * PROT_READ (alone) selects the input buffer.
-	 * PROT_WRITE (alone) selects the output buffer.
-	 * PROT_WRITE|PROT_READ together select the output buffer.
-	 */
 	if ((nprot & (PROT_READ | PROT_WRITE)) == 0)
 		return (EINVAL);
 
@@ -2003,27 +1999,27 @@ dsp_mmap_single(struct cdev *cdev, vm_ooffset_t *offset,
 
 	PCM_GIANT_ENTER(d);
 
-	dsp_lock_chans(priv, FREAD | FWRITE);
-	wrch = priv->wrch;
-	rdch = priv->rdch;
-
-	c = ((nprot & PROT_WRITE) != 0) ? wrch : rdch;
-	if (c == NULL || (c->flags & CHN_F_MMAP_INVALID) ||
-	    (*offset  + size) > c->bufsoft->allocsize ||
-	    (wrch != NULL && (wrch->flags & CHN_F_MMAP_INVALID)) ||
-	    (rdch != NULL && (rdch->flags & CHN_F_MMAP_INVALID))) {
-		dsp_unlock_chans(priv, FREAD | FWRITE);
+	/*
+	 * PROT_READ (alone) selects the input buffer.
+	 * PROT_WRITE (alone) selects the output buffer.
+	 * PROT_WRITE|PROT_READ together select the output buffer.
+	 */
+	c = ((nprot & PROT_WRITE) != 0) ? priv->wrch : priv->rdch;
+	if (c == NULL) {
 		PCM_GIANT_EXIT(d);
 		return (EINVAL);
 	}
 
-	if (wrch != NULL)
-		wrch->flags |= CHN_F_MMAP;
-	if (rdch != NULL)
-		rdch->flags |= CHN_F_MMAP;
-
+	CHN_LOCK(c);
+	if ((c->flags & CHN_F_MMAP_INVALID) ||
+	    c->bufsoft->allocsize < *offset + size) {
+		CHN_UNLOCK(c);
+		PCM_GIANT_EXIT(d);
+		return (EINVAL);
+	}
+	c->flags |= CHN_F_MMAP;
 	*offset = (uintptr_t)sndbuf_getbufofs(c->bufsoft, *offset);
-	dsp_unlock_chans(priv, FREAD | FWRITE);
+	CHN_UNLOCK(c);
 
 	handle = malloc(sizeof(*handle), M_DEVBUF, M_WAITOK);
 	handle->cdev = cdev;
@@ -2031,12 +2027,25 @@ dsp_mmap_single(struct cdev *cdev, vm_ooffset_t *offset,
 	*object = cdev_pager_allocate(handle, OBJT_DEVICE, &dsp_dev_pager_ops,
 	    size, nprot, *offset, curthread->td_ucred);
 	PCM_GIANT_LEAVE(d);
-	if (*object == NULL) {
+	if (*object != NULL) {
+		err = 0;
+		dealloc = false;
+		CHN_LOCK(c);
+		if (c->flags & CHN_F_MMAP_INVALID) {
+			c->flags &= ~CHN_F_MMAP;
+			err = EINVAL;
+			dealloc = true;
+		}
+		CHN_UNLOCK(c);
+		/* We use a helper bool to keep the channel locking simpler. */
+		if (dealloc)
+			vm_object_deallocate(*object);
+	} else {
 		free(handle, M_DEVBUF);
-		return (EINVAL);
+		err = ENOMEM;
 	}
 
-	return (0);
+	return (err);
 }
 
 static const char *dsp_aliases[] = {
@@ -2685,14 +2694,11 @@ dsp_oss_syncstart(int sg_id)
 	struct pcmchan_syncmember *sm, *sm_tmp;
 	struct pcmchan_syncgroup *sg;
 	struct pcm_channel *c;
-	int ret, needlocks;
+	int ret;
 
-	/* Get the synclists lock */
 	PCM_SG_LOCK();
-
 	do {
 		ret = 0;
-		needlocks = 0;
 
 		/* Search for syncgroup by ID */
 		SLIST_FOREACH(sg, &snd_pcm_syncgroups, link) {
@@ -2729,16 +2735,14 @@ dsp_oss_syncstart(int sg_id)
 				}
 
 				/** @todo Is PRIBIO correct/ */
-				ret = msleep(sm, &snd_pcm_syncgroups_mtx,
+				ret = msleep(sm, PCM_SG_LOCKPTR(),
 				    PRIBIO | PCATCH, "pcmsg", timo);
-				if (ret == EINTR || ret == ERESTART)
-					break;
-
-				needlocks = 1;
-				ret = 0; /* Assumes ret == EAGAIN... */
+				if (ret == EAGAIN)
+					ret = 0;
+				break;
 			}
 		}
-	} while (needlocks && ret == 0);
+	} while (ret == 0 && sm != NULL);
 
 	/* Proceed only if no errors encountered. */
 	if (ret == 0) {
@@ -3019,7 +3023,13 @@ dsp_kqevent(struct knote *kn, long hint)
 		return (1);
 	}
 	kn->kn_data = 0;
-	if (chn_polltrigger(ch)) {
+	/*
+	 * For mmaped channels pass the knote's own reference point so the
+	 * low watermark is tracked per-knote.  Non-mmaped channels ignore
+	 * the reference and fire based on the current amount of ready/free
+	 * data in the buffer, so all knotes see the same live state.
+	 */
+	if (chn_polltrigger(ch, (uint64_t)kn->kn_sdata)) {
 		if (kn->kn_filter == EVFILT_READ) {
 			kn->kn_data = sndbuf_getready(ch->bufsoft);
 			if (ch->flags & CHN_F_MMAP)
@@ -3034,6 +3044,7 @@ dsp_kqevent(struct knote *kn, long hint)
 				kn->kn_kevent.ext[0] = sndbuf_getready(ch->bufsoft) / ch->bufsoft->align;
 		}
 		kn->kn_kevent.ext[1] = ch->xruns;
+		kn->kn_sdata = ch->bufsoft->total;
 	}
 
 	return (kn->kn_data > 0);
@@ -3079,6 +3090,11 @@ dsp_kqfilter(struct cdev *dev, struct knote *kn)
 		knlist_add(&ch->bufsoft->sel.si_note, kn, 1);
 		CHN_UNLOCK(ch);
 		kn->kn_hook = ch;
+		/*
+		 * Start tracking from the current position so the first event
+		 * fires after c->lw additional bytes have been transferred.
+		 */
+		kn->kn_sdata = ch->bufsoft->prev_total;
 	} else
 		err = EINVAL;
 	PCM_GIANT_LEAVE(d);

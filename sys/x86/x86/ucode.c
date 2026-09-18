@@ -360,7 +360,7 @@ restart:
 		goto restart;
 	}
 }
-SYSINIT(ucode_release, SI_SUB_SMP + 1, SI_ORDER_ANY, ucode_release, NULL);
+SYSINIT(ucode_release, SI_SUB_SMP, SI_ORDER_LAST, ucode_release, NULL);
 
 void
 ucode_load_ap(int cpu)
@@ -385,7 +385,7 @@ map_ucode(const void *match, uintptr_t free, size_t len)
 
 	for (va = free; va < free + len; va += PAGE_SIZE)
 		pmap_kenter(va, (vm_paddr_t)va);
-	memcpy_early(free, match, len);
+	memcpy_early((void *)free, match, len);
 	return ((const void *)free);
 #else
 	(void)len;

@@ -30,6 +30,7 @@
 #else
 #include <ctype.h>
 #include <poll.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -368,6 +369,12 @@ libusb20_tr_set_flags(struct libusb20_transfer *xfer, uint8_t flags)
 {
 	xfer->flags = flags;
 	return;
+}
+
+uint8_t
+libusb20_tr_get_flags(struct libusb20_transfer *xfer)
+{
+	return (xfer->flags);
 }
 
 uint32_t
@@ -1267,7 +1274,8 @@ libusb20_be_device_foreach(struct libusb20_backend *pbe, struct libusb20_device 
 }
 
 struct libusb20_backend *
-libusb20_be_alloc(const struct libusb20_backend_methods *methods)
+libusb20_be_alloc(const struct libusb20_backend_methods *methods,
+    struct libusb20_be_ctx *pctx)
 {
 	struct libusb20_backend *pbe;
 
@@ -1276,6 +1284,17 @@ libusb20_be_alloc(const struct libusb20_backend_methods *methods)
 		return (NULL);
 	}
 	memset(pbe, 0, sizeof(*pbe));
+
+	if (pctx == NULL) {
+		/* the backend owns its own context */
+		pctx = libusb20_be_ctx_alloc();
+		if (pctx == NULL) {
+			free(pbe);
+			return (NULL);
+		}
+		pbe->be_ctx_owner = 1;
+	}
+	pbe->be_ctx = pctx;
 
 	TAILQ_INIT(&(pbe->usb_devs));
 
@@ -1289,29 +1308,29 @@ libusb20_be_alloc(const struct libusb20_backend_methods *methods)
 }
 
 struct libusb20_backend *
-libusb20_be_alloc_linux(void)
+libusb20_be_alloc_linux(struct libusb20_be_ctx *pctx)
 {
 	return (NULL);
 }
 
 struct libusb20_backend *
-libusb20_be_alloc_ugen20(void)
+libusb20_be_alloc_ugen20(struct libusb20_be_ctx *pctx)
 {
-	return (libusb20_be_alloc(&libusb20_ugen20_backend));
+	return (libusb20_be_alloc(&libusb20_ugen20_backend, pctx));
 }
 
 struct libusb20_backend *
-libusb20_be_alloc_default(void)
+libusb20_be_alloc_default(struct libusb20_be_ctx *pctx)
 {
 	struct libusb20_backend *pbe;
 
 #ifdef __linux__
-	pbe = libusb20_be_alloc_linux();
+	pbe = libusb20_be_alloc_linux(pctx);
 	if (pbe) {
 		return (pbe);
 	}
 #endif
-	pbe = libusb20_be_alloc_ugen20();
+	pbe = libusb20_be_alloc_ugen20(pctx);
 	if (pbe) {
 		return (pbe);
 	}
@@ -1334,6 +1353,8 @@ libusb20_be_free(struct libusb20_backend *pbe)
 	if (pbe->methods->exit_backend) {
 		pbe->methods->exit_backend(pbe);
 	}
+	if (pbe->be_ctx_owner)
+		libusb20_be_ctx_free(pbe->be_ctx);
 	/* free backend */
 	free(pbe);
 }

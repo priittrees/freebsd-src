@@ -1,5 +1,7 @@
 .include <bsd.own.mk>
 
+SUBDIR+=		libdummy
+
 ATF_TESTS_C+=		arc4random_test
 ATF_TESTS_C+=		dir2_test
 ATF_TESTS_C+=		dlopen_empty_test
@@ -11,9 +13,11 @@ ATF_TESTS_C+=		fpclassify2_test
 .if ${COMPILER_FEATURES:Mblocks}
 ATF_TESTS_C+=		fts_blocks_test
 .endif
+ATF_TESTS_C+=		fts_capsicum_test
 ATF_TESTS_C+=		fts_children_test
 ATF_TESTS_C+=		fts_misc_test
 ATF_TESTS_C+=		fts_open_test
+ATF_TESTS_C+=		fts_openat_test
 ATF_TESTS_C+=		fts_options_test
 ATF_TESTS_C+=		fts_regress_test
 ATF_TESTS_C+=		fts_set_test
@@ -60,6 +64,7 @@ CFLAGS+=	-DTEST_LONG_DOUBLE
 .if ${MACHINE_CPUARCH} == "aarch64" || \
     ${MACHINE_CPUARCH} == "amd64" || \
     ${MACHINE_CPUARCH} == "i386" || \
+    ${MACHINE_ARCH} == "powerpc64le" || \
     ${MACHINE_CPUARCH} == "riscv"
 CFLAGS+=	-D__HAVE_LONG_DOUBLE
 .endif

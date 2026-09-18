@@ -366,6 +366,9 @@ options 	COMPAT_FREEBSD13
 # Enable FreeBSD14 compatibility syscalls
 options 	COMPAT_FREEBSD14
 
+# Enable FreeBSD14 compatibility syscalls
+options 	COMPAT_FREEBSD15
+
 # Enable Linux Kernel Programming Interface
 options 	COMPAT_LINUXKPI
 
@@ -434,6 +437,13 @@ options 	QUEUE_MACRO_DEBUG_TRASH
 # interfere with serial console operation.
 #
 options 	SYSCTL_DEBUG
+
+#
+# Compile test-only failure-injection hooks in supporting device drivers.
+# These expose destructive controls below debug.fail_point and are omitted
+# by default.
+#
+options 	DRIVER_FAILPOINTS
 
 #
 # Enable textdump by default, this disables kernel core dumps.
@@ -2435,8 +2445,10 @@ device		hkbd		# HID keyboard
 device		hms		# HID mouse
 device		hmt		# HID multitouch (MS-compatible)
 device		hpen		# Generic pen driver
+device		hrfkill		# RFKILL driver
 device		hsctrl		# System controls
 device		ps4dshock	# Sony PS4 DualShock 4 gamepad driver
+device		ps5dsense	# Sony PS5 DualSense gamepad driver
 device		u2f		# FIDO/U2F authenticator
 options 	U2F_DROP_UHID_ALIAS	# Do not install /dev/uhid alias for
 				# /dev/u2f/ and rename driver from uhid to u2f
@@ -2613,6 +2625,9 @@ device		sbp		# SCSI over Firewire (Requires scbus and da)
 device		sbp_targ	# SBP-2 Target mode  (Requires scbus and targ)
 device		fwe		# Ethernet over FireWire (non-standard!)
 device		fwip		# IP over FireWire (RFC2734 and RFC3146)
+device		fwcam		# IIDC digital cameras over FireWire
+device		fwdv		# AV/C DV capture over FireWire
+device		fwisound	# Apple FireWire audio
 
 #####################################################################
 # dcons support (Dumb Console Device)

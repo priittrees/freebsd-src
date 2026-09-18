@@ -434,7 +434,7 @@ SUBDIR+=bin
 .if ${MK_CDDL} != "no"
 SUBDIR+=cddl
 .endif
-SUBDIR+=gnu include
+SUBDIR+=include
 .if ${MK_KERBEROS} != "no"
 .if ${MK_MITKRB5} != "no"
 SUBDIR+=krb5
@@ -3345,7 +3345,6 @@ _prebuild_libs=	${_kerberos5_lib_libasn1} \
 		lib/libbz2 ${_libcom_err} lib/libcrypt \
 		lib/libc++ \
 		lib/libelf lib/libexpat \
-		lib/libfigpar \
 		${_lib_libgssapi} \
 		lib/libjail \
 		lib/libkiconv lib/libkldelf lib/libkvm \
@@ -3383,11 +3382,6 @@ _prebuild_libs=	${_kerberos5_lib_libasn1} \
 		lib/libxo \
 		${_secure_lib_libcrypto} ${_secure_lib_libssl} \
 		${_lib_libldns} ${_secure_lib_libssh}
-
-.if ${MK_DIALOG} != "no"
-_prebuild_libs+= gnu/lib/libdialog
-gnu/lib/libdialog__L: lib/msun__L lib/ncurses/tinfo__L lib/ncurses/ncurses__L
-.endif
 
 .if ${MK_GOOGLETEST} != "no"
 _prebuild_libs+= lib/libregex
@@ -3430,7 +3424,7 @@ lib/liblzma__L: lib/libmd__L lib/libthr__L
 lib/libzstd__L: lib/libthr__L
 lib/librt__L: lib/libthr__L
 
-_generic_libs=	${_cddl_lib} gnu/lib ${_kerberos5_lib} lib ${_secure_lib}
+_generic_libs=	${_cddl_lib} ${_kerberos5_lib} lib ${_secure_lib}
 .if ${MK_IPFILTER} != "no"
 _generic_libs+=	sbin/ipf/libipf
 .endif

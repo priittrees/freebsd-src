@@ -35,7 +35,7 @@ dobuild()
 	echo "Fail (cleanup)"
 	continue
     fi
-    if ! make buildenv TARGET_ARCH=$ta BUILDENV_SHELL="make ${opt} -j 40 all"  \
+    if ! make buildenv TARGET_ARCH=$ta BUILDENV_SHELL="make ${opt} -j 1.5 all"  \
 	 >> $lf 2>&1; then
 	echo "Fail (build)"
 	continue
@@ -81,6 +81,16 @@ for i in \
     dobuild $ta _.boot.${ta}.log ""
 done
 
+# Cross build with gcc15, requires ${ta}-gcc15 to be installed
+for i in \
+	amd64/amd64 \
+	arm64/aarch64 \
+	riscv/riscv64 \
+	; do
+    ta=${i##*/}
+    dobuild $ta _.boot.${ta}.log "CROSS_TOOLCHAIN=${ta}-gcc15"
+done
+
 # Build w/o ZFS
 for i in \
 	arm64/aarch64 \
@@ -97,5 +107,17 @@ for i in \
 	i386/i386 \
 	; do
     ta=${i##*/}
-    dobuild $ta _.boot.${ta}.no_zfs.log "MK_LOADER_BIOS_TEXTONLY=no"
+    dobuild $ta _.boot.${ta}.no_vbe.log "MK_LOADER_BIOS_TEXTONLY=no"
+done
+
+# Build w/ BEARSSL
+for i in \
+	amd64/amd64 \
+	arm/armv7 \
+	arm64/aarch64 \
+	i386/i386 \
+	riscv/riscv64 \
+	; do
+    ta=${i##*/}
+    dobuild $ta _.boot.${ta}.bearssl.log "MK_BEARSSL=yes"
 done

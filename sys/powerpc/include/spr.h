@@ -539,6 +539,7 @@
 #define	  TCR_WRC_CORE		  0x10000000 /* Core reset */
 #define	  TCR_WRC_CHIP		  0x20000000 /* Chip reset */
 #define	  TCR_WRC_SYSTEM	  0x30000000 /* System reset */
+#define	  TCR_WRC_SHIFT		  28
 #define	  TCR_WIE		  0x08000000 /* Watchdog Interrupt Enable */
 #define	  TCR_PIE		  0x04000000 /* PIT Interrupt Enable */
 #define	  TCR_DIE		  0x04000000 /* Pecrementer Interrupt Enable */
@@ -868,6 +869,8 @@
 #define	  BUCSR_BBFI		0x00000200	/* Branch Buffer Flash Invalidate */
 
 #define	SPR_MMUCFG		0x3f7	/* ..8 MMU Configuration Register */
+#define	  MMUCFG_LPIDSIZE_M	  0x0F000000
+#define	  MMUCFG_LPIDSIZE_S	  24
 #define	  MMUCFG_PIDSIZE_M	  0x000007c0
 #define	  MMUCFG_PIDSIZE_S	  6
 #define	  MMUCFG_MAVN_M		  0x00000003

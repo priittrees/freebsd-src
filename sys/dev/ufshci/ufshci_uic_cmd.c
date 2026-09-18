@@ -165,12 +165,12 @@ ufshci_uic_wait_cmd(struct ufshci_controller *ctrlr,
 	return (0);
 }
 
-static int
+int
 ufshci_uic_send_cmd(struct ufshci_controller *ctrlr,
     struct ufshci_uic_cmd *uic_cmd, uint32_t *return_value)
 {
 	int error;
-	uint32_t config_result_code;
+	uint32_t config_result_code, result_value;
 
 	mtx_lock(&ctrlr->uic_cmd_lock);
 
@@ -188,21 +188,36 @@ ufshci_uic_send_cmd(struct ufshci_controller *ctrlr,
 
 	error = ufshci_uic_wait_cmd(ctrlr, uic_cmd);
 
+	/* The result registers stay valid only until the next command. */
+	if (error == 0) {
+		uic_cmd->argument2 = ufshci_mmio_read_4(ctrlr, ucmdarg2);
+		config_result_code = UFSHCIV(UFSHCI_UICCMDARG2_REG_ERROR_CODE,
+		    uic_cmd->argument2);
+		result_value = ufshci_mmio_read_4(ctrlr, ucmdarg3);
+	}
+
 	mtx_unlock(&ctrlr->uic_cmd_lock);
 
 	if (error)
 		return (ENXIO);
 
-	config_result_code = ufshci_mmio_read_4(ctrlr, ucmdarg2);
 	if (config_result_code) {
 		ufshci_printf(ctrlr,
 		    "Failed to send UIC command (Opcode: 0x%x"
 		    ", config result code = 0x%x)\n",
 		    uic_cmd->opcode, config_result_code);
+		/*
+		 * Reads fail here: there is no valid result to return.
+		 * Writes only log the error, so that a rejected optional
+		 * attribute does not fail bring-up.
+		 */
+		if (return_value != NULL)
+			return (ENXIO);
+		return (0);
 	}
 
 	if (return_value != NULL)
-		*return_value = ufshci_mmio_read_4(ctrlr, ucmdarg3);
+		*return_value = result_value;
 
 	return (0);
 }

@@ -21,7 +21,6 @@ options 	_KPOSIX_PRIORITY_SCHEDULING
 options 	ALT_BREAK_TO_DEBUGGER
 options 	BREAK_TO_DEBUGGER
 options 	BOOTP
-#options 	BOOTP_WIRED_TO=memac0
 options 	BOOTP_NFSROOT
 #options 	BOOTP_NFSV3
 options 	CD9660
@@ -32,6 +31,7 @@ options 	DDB
 options 	DEVICE_POLLING
 #options 	DIAGNOSTIC
 options 	FDT
+options 	RANDOM_ENABLE_TPM
 #makeoptions	FDT_DTS_FILE=mpc8555cds.dts
 options 	FFS			#Berkeley Fast Filesystem
 options 	SOFTUPDATES		#Enable FFS soft updates support
@@ -106,6 +106,7 @@ device		scc
 device  	sdhci
 device  	spibus
 device  	spigen
+device		tpm
 device		tuntap
 device		uart
 options 	USB_DEBUG	# enable debug msgs
@@ -130,9 +131,13 @@ options 	EVDEV_SUPPORT		# evdev support in legacy drivers
 device		evdev			# input event device support
 device		uinput			# install /dev/uinput cdev
 
+# extres frameworks
+device  	clk
+device  	phy
+device  	regulator
+device  	syscon
+
 # HID support
 options 	HID_DEBUG	# enable debug msgs
 device		hid		# Generic HID support
 device		hidbus		# Generic HID bus
-
-options		BOOTVERBOSE

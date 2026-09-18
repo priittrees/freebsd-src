@@ -127,6 +127,12 @@ CFLAGS+=	-I${SASRC}/geli
 .if ${LOADER_DISK_SUPPORT:Uyes} == "yes"
 CFLAGS+= -DLOADER_DISK_SUPPORT
 .endif
+.if ${LOADER_NET_SUPPORT:Uno} == "yes"
+CFLAGS+= -DLOADER_NET_SUPPORT
+.endif
+.if ${LOADER_MD_SUPPORT:Uno} == "yes"
+CFLAGS+= -DLOADER_MD_SUPPORT
+.endif
 
 # Machine specific flags for all builds here
 
@@ -180,6 +186,20 @@ CFLAGS+=	-fPIC
 .if ${LINKER_FEATURES:Mriscv-relaxations} == ""
 CFLAGS+=	-mno-relax
 .endif
+
+# ZLIB flags
+ZLIB_CFLAGS=-DHAVE_MEMCPY -I${SYSDIR}/contrib/zlib ${NO_WDEPRECATED_NON_PROTOTYPE}
+
+# BZIP2 flags
+BZIP2_CFLAGS=-I${SRCTOP}/contrib/bzip2  -DBZ_NO_STDIO -DBZ_NO_COMPRESS
+
+# ZSTD client cflags
+ZSTD_CFLAGS=-I${SYSDIR}/contrib/zstd/lib
+
+# XZ flags
+XZ_DIR=${SRCTOP}/sys/contrib/xz-embedded
+XZ_CFLAGS=-DXZ_USE_CRC64 -I${XZ_DIR}/freebsd -I${XZ_DIR}/linux/include/linux
+
 
 # The boot loader build uses dd status=none, where possible, for reproducible
 # build output (since performance varies from run to run). Trouble is that

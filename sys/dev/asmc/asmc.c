@@ -126,8 +126,17 @@ static int 	asmc_mbp_sysctl_light_right(SYSCTL_HANDLER_ARGS);
 static int 	asmc_mbp_sysctl_light_control(SYSCTL_HANDLER_ARGS);
 static int 	asmc_mbp_sysctl_light_left_10byte(SYSCTL_HANDLER_ARGS);
 static int	asmc_aupo_sysctl(SYSCTL_HANDLER_ARGS);
+static int	asmc_sil_sysctl(SYSCTL_HANDLER_ARGS);
 
 static int	asmc_key_getinfo(device_t, const char *, uint8_t *, char *);
+
+/* System state / board identity sysctls */
+static int	asmc_cause_sysctl(SYSCTL_HANDLER_ARGS);
+static int	asmc_msal_sysctl(SYSCTL_HANDLER_ARGS);
+static int	asmc_clkt_sysctl(SYSCTL_HANDLER_ARGS);
+static int	asmc_msps_sysctl(SYSCTL_HANDLER_ARGS);
+static int	asmc_rplt_sysctl(SYSCTL_HANDLER_ARGS);
+static int	asmc_rgen_sysctl(SYSCTL_HANDLER_ARGS);
 
 #ifdef ASMC_DEBUG
 /* Raw key access */
@@ -418,6 +427,39 @@ asmc_probe(device_t dev)
 	return (rv);
 }
 
+/*
+ * Try MMIO first; the legacy PIO range can be claimable but dead.
+ * Fall back to PIO if MMIO probe fails or the resource is absent.
+ */
+static int
+asmc_try_probe(device_t dev)
+{
+	struct asmc_softc *sc = device_get_softc(dev);
+
+	sc->sc_rid_mem = 0;
+	sc->sc_iomem = bus_alloc_resource_any(dev, SYS_RES_MEMORY,
+	    &sc->sc_rid_mem, RF_ACTIVE);
+	if (sc->sc_iomem != NULL) {
+		if (asmc_mmio_probe(dev) == 0) {
+			sc->sc_is_mmio = true;
+			if (bootverbose)
+				device_printf(dev, "using MMIO backend\n");
+			return (0);
+		}
+		bus_release_resource(dev, SYS_RES_MEMORY,
+		    sc->sc_rid_mem, sc->sc_iomem);
+		sc->sc_iomem = NULL;
+	}
+
+	sc->sc_ioport = bus_alloc_resource_any(dev, SYS_RES_IOPORT,
+	    &sc->sc_rid_port, RF_ACTIVE);
+	if (sc->sc_ioport != NULL)
+		return (0);
+
+	device_printf(dev, "unable to allocate IO port or MMIO\n");
+	return (ENOMEM);
+}
+
 static int
 asmc_attach(device_t dev)
 {
@@ -428,33 +470,9 @@ asmc_attach(device_t dev)
 	struct sysctl_ctx_list *sysctlctx;
 	struct sysctl_oid *sysctlnode;
 
-	/*
-	 * Try MMIO first (T2 Macs expose SMC via memory-mapped I/O).
-	 * Fall back to standard I/O port if MMIO is not available.
-	 */
-	sc->sc_rid_mem = 0;
-	sc->sc_iomem = bus_alloc_resource_any(dev, SYS_RES_MEMORY,
-	    &sc->sc_rid_mem, RF_ACTIVE);
-	if (sc->sc_iomem != NULL) {
-		if (asmc_mmio_probe(dev) == 0) {
-			sc->sc_is_mmio = 1;
-			device_printf(dev, "using MMIO backend (T2)\n");
-		} else {
-			bus_release_resource(dev, SYS_RES_MEMORY,
-			    sc->sc_rid_mem, sc->sc_iomem);
-			sc->sc_iomem = NULL;
-		}
-	}
-
-	if (!sc->sc_is_mmio) {
-		sc->sc_ioport = bus_alloc_resource_any(dev, SYS_RES_IOPORT,
-		    &sc->sc_rid_port, RF_ACTIVE);
-		if (sc->sc_ioport == NULL) {
-			device_printf(dev, "unable to allocate IO port\n");
-			ret = ENOMEM;
-			goto err;
-		}
-	}
+	ret = asmc_try_probe(dev);
+	if (ret != 0)
+		goto err;
 
 	sysctlctx = device_get_sysctl_ctx(dev);
 	sysctlnode = device_get_sysctl_tree(dev);
@@ -650,6 +668,72 @@ asmc_attach(device_t dev)
 		    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE,
 		    dev, 0, asmc_bclm_sysctl, "I",
 		    "Battery charge limit (0-100)");
+	}
+
+	/* System state / board identity subtree. */
+	{
+		struct sysctl_oid *sys_tree;
+		uint8_t msps_len;
+
+		sys_tree = SYSCTL_ADD_NODE(sysctlctx,
+		    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)), OID_AUTO,
+		    "system", CTLFLAG_RD | CTLFLAG_MPSAFE, 0,
+		    "System state and board identity");
+		if (sys_tree == NULL) {
+			device_printf(dev,
+			    "failed to create system sysctl node\n");
+			goto nosms;
+		}
+
+		if (asmc_key_getinfo(dev, ASMC_KEY_MSSD, NULL, NULL) == 0)
+			SYSCTL_ADD_PROC(sysctlctx,
+			    SYSCTL_CHILDREN(sys_tree), OID_AUTO, "shutdown_cause",
+			    CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MPSAFE,
+			    dev, 0, asmc_cause_sysctl, "A",
+			    "Last shutdown cause (MSSD)");
+
+		if (asmc_key_getinfo(dev, ASMC_KEY_MSSP, NULL, NULL) == 0)
+			SYSCTL_ADD_PROC(sysctlctx,
+			    SYSCTL_CHILDREN(sys_tree), OID_AUTO, "sleep_cause",
+			    CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MPSAFE,
+			    dev, 1, asmc_cause_sysctl, "A",
+			    "Last sleep cause (MSSP)");
+
+		if (asmc_key_getinfo(dev, ASMC_KEY_MSAL, NULL, NULL) == 0)
+			SYSCTL_ADD_PROC(sysctlctx,
+			    SYSCTL_CHILDREN(sys_tree), OID_AUTO, "thermal_status",
+			    CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MPSAFE,
+			    dev, 0, asmc_msal_sysctl, "A",
+			    "Thermal subsystem status flags (MSAL)");
+
+		if (asmc_key_getinfo(dev, ASMC_KEY_CLKT, NULL, NULL) == 0)
+			SYSCTL_ADD_PROC(sysctlctx,
+			    SYSCTL_CHILDREN(sys_tree), OID_AUTO, "time_of_day",
+			    CTLTYPE_UINT | CTLFLAG_RD | CTLFLAG_MPSAFE,
+			    dev, 0, asmc_clkt_sysctl, "IU",
+			    "Seconds since midnight per SMC clock (CLKT)");
+
+		if (asmc_key_getinfo(dev, ASMC_KEY_MSPS, &msps_len, NULL) == 0 &&
+		    (msps_len == 1 || msps_len == 2))
+			SYSCTL_ADD_PROC(sysctlctx,
+			    SYSCTL_CHILDREN(sys_tree), OID_AUTO, "power_state",
+			    CTLTYPE_UINT | CTLFLAG_RD | CTLFLAG_MPSAFE,
+			    dev, 0, asmc_msps_sysctl, "IU",
+			    "SMC power state index (MSPS)");
+
+		if (asmc_key_getinfo(dev, ASMC_KEY_RPLT, NULL, NULL) == 0)
+			SYSCTL_ADD_PROC(sysctlctx,
+			    SYSCTL_CHILDREN(sys_tree), OID_AUTO, "board_id",
+			    CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_MPSAFE,
+			    dev, 0, asmc_rplt_sysctl, "A",
+			    "Apple internal board codename (RPlt)");
+
+		if (asmc_key_getinfo(dev, ASMC_KEY_RGEN, NULL, NULL) == 0)
+			SYSCTL_ADD_PROC(sysctlctx,
+			    SYSCTL_CHILDREN(sys_tree), OID_AUTO, "chip_gen",
+			    CTLTYPE_UINT | CTLFLAG_RD | CTLFLAG_MPSAFE,
+			    dev, 0, asmc_rgen_sysctl, "IU",
+			    "Apple security chip generation (RGEN; 3=T2)");
 	}
 
 	if (!sc->sc_has_sms)
@@ -854,6 +938,16 @@ asmc_init(device_t dev)
 		    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE,
 		    dev, 0, asmc_aupo_sysctl, "I",
 		    "Auto power-on after AC power loss (0=off, 1=on)");
+	}
+
+	/* Sleep Indicator LED (SIL) control via MSLD/MSLS keys. */
+	if (asmc_key_read(dev, ASMC_KEY_MSLD, buf, 1) == 0) {
+		SYSCTL_ADD_PROC(sysctlctx,
+		    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)),
+		    OID_AUTO, "sil",
+		    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE,
+		    dev, 0, asmc_sil_sysctl, "I",
+		    "Sleep indicator LED (0=off, 1=on)");
 	}
 
 	sc->sc_nfan = asmc_fan_count(dev);
@@ -1405,78 +1499,50 @@ asmc_raw_type_sysctl(SYSCTL_HANDLER_ARGS)
 }
 #endif
 
-/*
- * Convert signed fixed-point SMC values to milli-units.
- * Format "spXY" means signed with X integer bits and Y fraction bits.
- */
-static int
-asmc_sp78_to_milli(const uint8_t *buf)
+/* SMC sensor type table: type string to fixed-point divisor. */
+static const struct {
+	const char	type[5];
+	int		divisor;
+} asmc_sensor_types[] = {
+	{ "sp78",  256 },
+	{ "sp87",  128 },
+	{ "sp4b", 2048 },
+	{ "sp5a", 1024 },
+	{ "sp69",  512 },
+	{ "sp96",   64 },
+	{ "sp2d", 8192 },
+	{ "ui16",    1 },
+	{ "",        0 },
+};
+
+/* Convert a 2-byte SMC value to milli-units. */
+static bool
+asmc_sensor_convert(const char *type, const uint8_t *buf, int *millivalue)
 {
-	int16_t val = (int16_t)be16dec(buf);
+	int i;
 
-	return ((int)val * 1000) / 256;
-}
-
-static int
-asmc_sp87_to_milli(const uint8_t *buf)
-{
-	int16_t val = (int16_t)be16dec(buf);
-
-	return ((int)val * 1000) / 128;
-}
-
-static int
-asmc_sp4b_to_milli(const uint8_t *buf)
-{
-	int16_t val = (int16_t)be16dec(buf);
-
-	return ((int)val * 1000) / 2048;
-}
-
-static int
-asmc_sp5a_to_milli(const uint8_t *buf)
-{
-	int16_t val = (int16_t)be16dec(buf);
-
-	return ((int)val * 1000) / 1024;
-}
-
-static int
-asmc_sp69_to_milli(const uint8_t *buf)
-{
-	int16_t val = (int16_t)be16dec(buf);
-
-	return ((int)val * 1000) / 512;
-}
-
-static int
-asmc_sp96_to_milli(const uint8_t *buf)
-{
-	int16_t val = (int16_t)be16dec(buf);
-
-	return ((int)val * 1000) / 64;
-}
-
-static int
-asmc_sp2d_to_milli(const uint8_t *buf)
-{
-	int16_t val = (int16_t)be16dec(buf);
-
-	return ((int)val * 1000) / 8192;
+	for (i = 0; asmc_sensor_types[i].divisor != 0; i++) {
+		if (strncmp(type, asmc_sensor_types[i].type, 4) != 0)
+			continue;
+		if (asmc_sensor_types[i].divisor == 1)
+			*millivalue = be16dec(buf);
+		else
+			*millivalue = ((int)(int16_t)be16dec(buf) * 1000) /
+			    asmc_sensor_types[i].divisor;
+		return (true);
+	}
+	return (false);
 }
 
 static bool
 asmc_sensor_type_supported(const char *type)
 {
+	int i;
 
-	return (strncmp(type, "sp78", 4) == 0 ||
-	    strncmp(type, "sp87", 4) == 0 ||
-	    strncmp(type, "sp4b", 4) == 0 ||
-	    strncmp(type, "sp5a", 4) == 0 ||
-	    strncmp(type, "sp69", 4) == 0 ||
-	    strncmp(type, "sp96", 4) == 0 ||
-	    strncmp(type, "sp2d", 4) == 0 ||
-	    strncmp(type, "ui16", 4) == 0);
+	for (i = 0; asmc_sensor_types[i].divisor != 0; i++)
+		if (strncmp(type, asmc_sensor_types[i].type, 4) == 0)
+			return (true);
+	return (false);
 }
 
 /*
@@ -1507,23 +1573,7 @@ asmc_sensor_read(device_t dev, const char *key, int *millivalue)
 	if (error != 0)
 		return (error);
 
-	if (strncmp(type, "sp78", 4) == 0) {
-		*millivalue = asmc_sp78_to_milli(buf);
-	} else if (strncmp(type, "sp87", 4) == 0) {
-		*millivalue = asmc_sp87_to_milli(buf);
-	} else if (strncmp(type, "sp4b", 4) == 0) {
-		*millivalue = asmc_sp4b_to_milli(buf);
-	} else if (strncmp(type, "sp5a", 4) == 0) {
-		*millivalue = asmc_sp5a_to_milli(buf);
-	} else if (strncmp(type, "sp69", 4) == 0) {
-		*millivalue = asmc_sp69_to_milli(buf);
-	} else if (strncmp(type, "sp96", 4) == 0) {
-		*millivalue = asmc_sp96_to_milli(buf);
-	} else if (strncmp(type, "sp2d", 4) == 0) {
-		*millivalue = asmc_sp2d_to_milli(buf);
-	} else if (strncmp(type, "ui16", 4) == 0) {
-		*millivalue = be16dec(buf);
-	} else {
+	if (!asmc_sensor_convert(type, buf, millivalue)) {
 		if (bootverbose)
 			device_printf(dev,
 			    "%s: unknown type '%s' for key %s\n",
@@ -1659,32 +1709,36 @@ asmc_detect_sensors(device_t dev)
 		}
 	}
 
-	/* Voltage sensors: V..W range */
-	error = asmc_key_search(dev, "V\0\0\0", &start);
-	if (error == 0)
-		error = asmc_key_search(dev, "W\0\0\0", &end);
-	if (error == 0)
-		asmc_scan_sensor_range(dev, start, end, 'V',
-		    &sc->sc_voltage_count, sc->sc_voltage_sensors,
-		    ASMC_MAX_SENSORS);
+	/* Voltage/Current/Power sensors */
+	static const struct {
+		const char	*range_start;
+		const char	*range_end;
+		char		prefix;
+	} sensor_ranges[] = {
+		{ "V\0\0\0", "W\0\0\0", 'V' },	/* Voltage */
+		{ "I\0\0\0", "J\0\0\0", 'I' },	/* Current */
+		{ "P\0\0\0", "Q\0\0\0", 'P' },	/* Power */
+	};
+	static const size_t nsensor_ranges = nitems(sensor_ranges);
 
-	/* Current sensors: I..J range */
-	error = asmc_key_search(dev, "I\0\0\0", &start);
-	if (error == 0)
-		error = asmc_key_search(dev, "J\0\0\0", &end);
-	if (error == 0)
-		asmc_scan_sensor_range(dev, start, end, 'I',
-		    &sc->sc_current_count, sc->sc_current_sensors,
-		    ASMC_MAX_SENSORS);
+	int *sensor_counts[] = {
+	    &sc->sc_voltage_count, &sc->sc_current_count,
+	    &sc->sc_power_count };
+	char **sensor_arrays[] = {
+	    sc->sc_voltage_sensors, sc->sc_current_sensors,
+	    sc->sc_power_sensors };
 
-	/* Power sensors: P..Q range */
-	error = asmc_key_search(dev, "P\0\0\0", &start);
-	if (error == 0)
-		error = asmc_key_search(dev, "Q\0\0\0", &end);
-	if (error == 0)
-		asmc_scan_sensor_range(dev, start, end, 'P',
-		    &sc->sc_power_count, sc->sc_power_sensors,
-		    ASMC_MAX_SENSORS);
+	for (unsigned int r = 0; r < nsensor_ranges; r++) {
+		error = asmc_key_search(dev, sensor_ranges[r].range_start,
+		    &start);
+		if (error == 0)
+			error = asmc_key_search(dev,
+			    sensor_ranges[r].range_end, &end);
+		if (error == 0)
+			asmc_scan_sensor_range(dev, start, end,
+			    sensor_ranges[r].prefix, sensor_counts[r],
+			    sensor_arrays[r], ASMC_MAX_SENSORS);
+	}
 
 	/* Ambient light sensors: AL* in A..B range */
 	error = asmc_key_search(dev, "A\0\0\0", &start);
@@ -1722,63 +1776,46 @@ asmc_detect_sensors(device_t dev)
 	/* Register sysctls for detected sensors */
 	sysctlctx = device_get_sysctl_ctx(dev);
 
-	/* Voltage sensors */
-	if (sc->sc_voltage_count > 0) {
+	static const struct {
+		const char	*node_name;
+		const char	*node_desc;
+		char		tag;
+		const char	*leaf_desc;
+	} sensor_sysctl[] = {
+		{ "voltage", "Voltage sensors (millivolts)",  'V',
+		    "Voltage sensor (millivolts)" },
+		{ "current", "Current sensors (milliamps)",   'I',
+		    "Current sensor (milliamps)" },
+		{ "power",   "Power sensors (milliwatts)",    'P',
+		    "Power sensor (milliwatts)" },
+		{ "ambient", "Ambient light sensors",         'L',
+		    "Light sensor value" },
+	};
+
+	int *sysctl_counts[] = {
+	    &sc->sc_voltage_count, &sc->sc_current_count,
+	    &sc->sc_power_count, &sc->sc_light_count };
+	char **sysctl_arrays[] = {
+	    sc->sc_voltage_sensors, sc->sc_current_sensors,
+	    sc->sc_power_sensors, sc->sc_light_sensors };
+
+	for (unsigned int s = 0; s < nitems(sensor_sysctl); s++) {
+		int count = *sysctl_counts[s];
+		if (count <= 0)
+			continue;
 		tree_node = SYSCTL_ADD_NODE(sysctlctx,
 		    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)), OID_AUTO,
-		    "voltage", CTLFLAG_RD | CTLFLAG_MPSAFE, 0, "Voltage sensors (millivolts)");
-
-		for (i = 0; i < sc->sc_voltage_count; i++) {
-			SYSCTL_ADD_PROC(sysctlctx, SYSCTL_CHILDREN(tree_node),
-			    OID_AUTO, sc->sc_voltage_sensors[i],
+		    sensor_sysctl[s].node_name,
+		    CTLFLAG_RD | CTLFLAG_MPSAFE, 0,
+		    sensor_sysctl[s].node_desc);
+		for (i = 0; i < count; i++) {
+			SYSCTL_ADD_PROC(sysctlctx,
+			    SYSCTL_CHILDREN(tree_node),
+			    OID_AUTO, sysctl_arrays[s][i],
 			    CTLTYPE_INT | CTLFLAG_RD | CTLFLAG_MPSAFE,
-			    dev, ('V' << 8) | i, asmc_sensor_sysctl, "I",
-			    "Voltage sensor (millivolts)");
-		}
-	}
-
-	/* Current sensors */
-	if (sc->sc_current_count > 0) {
-		tree_node = SYSCTL_ADD_NODE(sysctlctx,
-		    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)), OID_AUTO,
-		    "current", CTLFLAG_RD | CTLFLAG_MPSAFE, 0, "Current sensors (milliamps)");
-
-		for (i = 0; i < sc->sc_current_count; i++) {
-			SYSCTL_ADD_PROC(sysctlctx, SYSCTL_CHILDREN(tree_node),
-			    OID_AUTO, sc->sc_current_sensors[i],
-			    CTLTYPE_INT | CTLFLAG_RD | CTLFLAG_MPSAFE,
-			    dev, ('I' << 8) | i, asmc_sensor_sysctl, "I",
-			    "Current sensor (milliamps)");
-		}
-	}
-
-	/* Power sensors */
-	if (sc->sc_power_count > 0) {
-		tree_node = SYSCTL_ADD_NODE(sysctlctx,
-		    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)), OID_AUTO,
-		    "power", CTLFLAG_RD | CTLFLAG_MPSAFE, 0, "Power sensors (milliwatts)");
-
-		for (i = 0; i < sc->sc_power_count; i++) {
-			SYSCTL_ADD_PROC(sysctlctx, SYSCTL_CHILDREN(tree_node),
-			    OID_AUTO, sc->sc_power_sensors[i],
-			    CTLTYPE_INT | CTLFLAG_RD | CTLFLAG_MPSAFE,
-			    dev, ('P' << 8) | i, asmc_sensor_sysctl, "I",
-			    "Power sensor (milliwatts)");
-		}
-	}
-
-	/* Ambient light sensors */
-	if (sc->sc_light_count > 0) {
-		tree_node = SYSCTL_ADD_NODE(sysctlctx,
-		    SYSCTL_CHILDREN(device_get_sysctl_tree(dev)), OID_AUTO,
-		    "ambient", CTLFLAG_RD | CTLFLAG_MPSAFE, 0, "Ambient light sensors");
-
-		for (i = 0; i < sc->sc_light_count; i++) {
-			SYSCTL_ADD_PROC(sysctlctx, SYSCTL_CHILDREN(tree_node),
-			    OID_AUTO, sc->sc_light_sensors[i],
-			    CTLTYPE_INT | CTLFLAG_RD | CTLFLAG_MPSAFE,
-			    dev, ('L' << 8) | i, asmc_sensor_sysctl, "I",
-			    "Light sensor value");
+			    dev, (sensor_sysctl[s].tag << 8) | i,
+			    asmc_sensor_sysctl, "I",
+			    sensor_sysctl[s].leaf_desc);
 		}
 	}
 
@@ -2512,6 +2549,40 @@ asmc_aupo_sysctl(SYSCTL_HANDLER_ARGS)
 	return (0);
 }
 
+/* Sleep Indicator LED (SIL) control; see ASMC_KEY_MSLD/MSLS in asmcvar.h. */
+static int
+asmc_sil_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	device_t dev = (device_t)arg1;
+	uint8_t msld;
+	int val, error;
+
+	if (asmc_key_read(dev, ASMC_KEY_MSLD, &msld, 1) != 0)
+		return (EIO);
+
+	/* MSLD 0xff means off, anything else means on */
+	val = (msld != 0xff) ? 1 : 0;
+	error = sysctl_handle_int(oidp, &val, 0, req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+
+	if (val != 0) {
+		/* Turn on: unlatch MSLS first, then set MSLD duty */
+		uint8_t msls = 0x01;
+		if (asmc_key_write(dev, ASMC_KEY_MSLS, &msls, 1) != 0)
+			return (EIO);
+		msld = 0x01;
+	} else {
+		/* Turn off: just set MSLD to 0xff */
+		msld = 0xff;
+	}
+
+	if (asmc_key_write(dev, ASMC_KEY_MSLD, &msld, 1) != 0)
+		return (EIO);
+
+	return (0);
+}
+
 static int
 asmc_backlight_update_status(device_t dev, struct backlight_props *props)
 {
@@ -2545,4 +2616,131 @@ asmc_backlight_get_info(device_t dev, struct backlight_info *info)
 	strlcpy(info->name, "Apple MacBook Keyboard", BACKLIGHTMAXNAMELENGTH);
 
 	return (0);
+}
+
+static const char *
+asmc_cause_str(int8_t cause, bool is_sleep)
+{
+	size_t i;
+
+	for (i = 0; i < nitems(asmc_cause_table); i++) {
+		if (asmc_cause_table[i].code != cause)
+			continue;
+		if (is_sleep && asmc_cause_table[i].sleep_desc != NULL)
+			return (asmc_cause_table[i].sleep_desc);
+		return (asmc_cause_table[i].desc);
+	}
+	return (NULL);
+}
+
+/* MSSD/MSSP: last shutdown/sleep cause.  arg2: 0=shutdown, 1=sleep. */
+static int
+asmc_cause_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	device_t dev = (device_t)arg1;
+	bool is_sleep = (arg2 != 0);
+	const char *key = is_sleep ? ASMC_KEY_MSSP : ASMC_KEY_MSSD;
+	int8_t cause;
+	const char *desc;
+	char buf[ASMC_CAUSE_BUFLEN];
+
+	/* EIO: SMC I/O bus did not respond to key read. */
+	if (asmc_key_read(dev, key, (uint8_t *)&cause, 1) != 0)
+		return (EIO);
+
+	desc = asmc_cause_str(cause, is_sleep);
+	if (desc != NULL)
+		snprintf(buf, sizeof(buf), "%d (%s)", (int)cause, desc);
+	else
+		snprintf(buf, sizeof(buf), "%d", (int)cause);
+
+	return (sysctl_handle_string(oidp, buf, sizeof(buf), req));
+}
+
+static int
+asmc_msal_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	device_t dev = (device_t)arg1;
+	uint8_t msal;
+	char buf[80];
+
+	/* EIO: SMC I/O bus did not respond to key read. */
+	if (asmc_key_read(dev, ASMC_KEY_MSAL, &msal, 1) != 0)
+		return (EIO);
+
+	snprintf(buf, sizeof(buf),
+	    "0x%02x (tss=%d therm_valid=%d calib_valid=%d prochot=%d plimits=%d)",
+	    msal,
+	    (msal & ASMC_MSAL_TSS) != 0,
+	    (msal & ASMC_MSAL_THERM_VALID) != 0,
+	    (msal & ASMC_MSAL_CALIB_VALID) != 0,
+	    (msal & ASMC_MSAL_PROCHOT) != 0,
+	    (msal & ASMC_MSAL_PLIMITS) != 0);
+
+	return (sysctl_handle_string(oidp, buf, sizeof(buf), req));
+}
+
+static int
+asmc_clkt_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	device_t dev = (device_t)arg1;
+	uint8_t buf[4];
+	uint32_t secs;
+
+	if (asmc_key_read(dev, ASMC_KEY_CLKT, buf, 4) != 0)
+		return (EIO);
+
+	secs = be32dec(buf);
+	return (sysctl_handle_32(oidp, &secs, 0, req));
+}
+
+static int
+asmc_msps_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	device_t dev = (device_t)arg1;
+	uint8_t buf[2], len;
+	uint32_t state;
+
+	if (asmc_key_getinfo(dev, ASMC_KEY_MSPS, &len, NULL) != 0)
+		return (EIO);
+	if (len != 1 && len != 2)
+		return (EIO);
+
+	memset(buf, 0, sizeof(buf));
+	if (asmc_key_read(dev, ASMC_KEY_MSPS, buf, len) != 0)
+		return (EIO);
+
+	state = (len == 1) ? buf[0] : be16dec(buf);
+	return (sysctl_handle_32(oidp, &state, 0, req));
+}
+
+static int
+asmc_rplt_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	device_t dev = (device_t)arg1;
+	uint8_t buf[ASMC_RPLT_MAXLEN + 1];
+	char name[ASMC_RPLT_MAXLEN + 1];
+
+	memset(buf, 0, sizeof(buf));
+	if (asmc_key_read(dev, ASMC_KEY_RPLT, buf, ASMC_RPLT_MAXLEN) != 0)
+		return (EIO);
+
+	memcpy(name, buf, ASMC_RPLT_MAXLEN);
+	name[ASMC_RPLT_MAXLEN] = '\0';
+
+	return (sysctl_handle_string(oidp, name, sizeof(name), req));
+}
+
+static int
+asmc_rgen_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	device_t dev = (device_t)arg1;
+	uint8_t gen;
+	uint32_t val;
+
+	if (asmc_key_read(dev, ASMC_KEY_RGEN, &gen, 1) != 0)
+		return (EIO);
+
+	val = gen;
+	return (sysctl_handle_32(oidp, &val, 0, req));
 }
